@@ -28,10 +28,15 @@ $requestMethod = $_SERVER['REQUEST_METHOD'];
 // Remove query string from URI
 $uri = parse_url($requestUri, PHP_URL_PATH);
 
-// Remove base path if API is in subdirectory
-$basePath = '/split_cash';
-if (strpos($uri, $basePath) === 0) {
-  $uri = substr($uri, strlen($basePath));
+// Check if URL is passed via query parameter (from .htaccess)
+if (isset($_GET['url'])) {
+  $uri = '/' . trim($_GET['url'], '/');
+} else {
+  // Remove base path if API is in subdirectory
+  $basePath = '/split_cash';
+  if (strpos($uri, $basePath) === 0) {
+    $uri = substr($uri, strlen($basePath));
+  }
 }
 $uri = $uri ?: '/';
 
