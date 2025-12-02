@@ -1,15 +1,17 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteBase /api/
     
-    # Handle CORS preflight
+    # Set base to subdirectory
+    RewriteBase /split_cash/
+    
+    # Handle CORS preflight OPTIONS requests
     RewriteCond %{REQUEST_METHOD} OPTIONS
     RewriteRule ^(.*)$ $1 [R=200,L]
     
-    # Route all requests to index.php
+    # Route all requests to index.php (except actual files/dirs)
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^(.*)$ index.php [QSA,L]
+    RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
 </IfModule>
 
 # Enable CORS

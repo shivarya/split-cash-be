@@ -2,11 +2,11 @@
 
 ## 1. Test Health Endpoint
 
-**Test URL:** `https://shivarya.dev/api/health`
+**Test URL:** `https://medimention.com/split_cash/health`
 
 Open in browser or use curl:
 ```bash
-curl https://shivarya.dev/api/health
+curl https://medimention.com/split_cash/health
 ```
 
 **Expected Response:**
@@ -27,11 +27,11 @@ If you get "database": "disconnected", check your cPanel `.env` database credent
 
 ## 2. Test Google Authentication
 
-**Endpoint:** `POST https://shivarya.dev/api/auth/google`
+**Endpoint:** `POST https://medimention.com/split_cash/auth/google`
 
 **Using curl:**
 ```bash
-curl -X POST https://shivarya.dev/api/auth/google \
+curl -X POST https://medimention.com/split_cash/auth/google \
   -H "Content-Type: application/json" \
   -d '{"idToken":"YOUR_GOOGLE_ID_TOKEN_HERE"}'
 ```
@@ -63,7 +63,7 @@ First, get a token from Google auth (step 2), then test:
 
 ### Get User Profile
 ```bash
-curl https://shivarya.dev/api/auth/profile \
+curl https://medimention.com/split_cash/auth/profile \
   -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 ```
 
@@ -84,7 +84,7 @@ curl https://shivarya.dev/api/auth/profile \
 
 ### Create Group
 ```bash
-curl -X POST https://shivarya.dev/api/groups \
+curl -X POST https://medimention.com/split_cash/groups \
   -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
   -H "Content-Type: application/json" \
   -d '{
@@ -111,7 +111,7 @@ curl -X POST https://shivarya.dev/api/groups \
 
 ### Get Groups
 ```bash
-curl https://shivarya.dev/api/groups \
+curl https://medimention.com/split_cash/groups \
   -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 ```
 
@@ -146,7 +146,7 @@ curl https://shivarya.dev/api/groups \
    # API_URL=http://10.0.2.2:3000/api
    
    # Use production API
-   API_URL=https://shivarya.dev/api
+   API_URL=https://medimention.com/split_cash
    
    GOOGLE_CLIENT_ID=961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com
    ```
@@ -195,7 +195,7 @@ Header set Access-Control-Allow-Headers "Content-Type, Authorization"
 
 ### Issue: Mobile app can't connect
 **Fix:**
-1. Make sure you're using `https://shivarya.dev/api` (not http)
+1. Make sure you're using `https://medimention.com/split_cash` (not http)
 2. Test health endpoint in browser first
 3. Clear Metro cache: `npx expo start --clear`
 4. Rebuild app if needed: `npx expo run:android`
@@ -225,7 +225,7 @@ In cPanel → **phpMyAdmin** → Check `users`, `expense_groups`, `migrations` t
 
 ### Test API Response Time
 ```bash
-curl -w "@-" -o /dev/null -s https://shivarya.dev/api/health <<'EOF'
+curl -w "@-" -o /dev/null -s https://medimention.com/split_cash/health <<'EOF'
     time_namelookup:  %{time_namelookup}s\n
        time_connect:  %{time_connect}s\n
     time_appconnect:  %{time_appconnect}s\n
