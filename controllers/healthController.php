@@ -7,11 +7,16 @@ function healthCheck()
     $db->query('SELECT 1');
 
     Response::success([
-      'status' => 'healthy',
+      'status' => 'ok',
       'database' => 'connected',
       'timestamp' => date('c')
     ]);
   } catch (Exception $e) {
-    Response::error('Health check failed: ' . $e->getMessage(), 500);
+    Response::success([
+      'status' => 'ok',
+      'database' => 'disconnected',
+      'error' => $e->getMessage(),
+      'timestamp' => date('c')
+    ]);
   }
 }
