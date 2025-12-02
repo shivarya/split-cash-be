@@ -1,0 +1,27 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+/vendor/
+
+# Logs
+*.log
+php_errors.log
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
