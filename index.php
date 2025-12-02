@@ -1,8 +1,27 @@
 <?php
-// Enable error reporting for debugging
+// Enable error reporting for debugging - SHOW ALL ERRORS
 error_reporting(E_ALL);
-ini_set('display_errors', 0); // Don't display errors in output
+ini_set('display_errors', 1); // Display errors in output
 ini_set('log_errors', 1); // Log errors
+
+// Custom error handler to return JSON
+set_error_handler(function ($severity, $message, $file, $line) {
+  throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+// Custom exception handler
+set_exception_handler(function ($e) {
+  http_response_code(500);
+  header('Content-Type: application/json');
+  echo json_encode([
+    'success' => false,
+    'error' => $e->getMessage(),
+    'file' => $e->getFile(),
+    'line' => $e->getLine(),
+    'trace' => $e->getTraceAsString()
+  ]);
+  exit;
+});
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
