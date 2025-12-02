@@ -24,10 +24,11 @@ $requestMethod = $_SERVER['REQUEST_METHOD'];
 $uri = parse_url($requestUri, PHP_URL_PATH);
 
 // Remove base path if API is in subdirectory
-$basePath = '/api';
+$basePath = '/split_cash';
 if (strpos($uri, $basePath) === 0) {
   $uri = substr($uri, strlen($basePath));
 }
+$uri = $uri ?: '/';
 
 // Route the request
 try {
