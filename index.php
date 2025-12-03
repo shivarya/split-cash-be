@@ -68,6 +68,7 @@ try {
       'version' => '1.0.0',
       'status' => 'running'
     ]);
+    exit;
   }
 
   if ($uri === '/health') {
