@@ -255,7 +255,7 @@
                 const response = await fetch(`${API_BASE}/`);
                 const data = await response.json();
                 
-                if (data.message && data.message.includes('Split Cash API')) {
+                if (data.success && data.data && data.data.message && data.data.message.includes('Split Cash API')) {
                     resultDiv.innerHTML = `<div class="result success">✅ SUCCESS\n\n${JSON.stringify(data, null, 2)}</div>`;
                     statusSpan.innerHTML = '<span class="status-badge success">✓ PASS</span>';
                 } else {
