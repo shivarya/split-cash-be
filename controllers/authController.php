@@ -21,17 +21,27 @@ function googleAuth()
   $input = getJsonInput();
   $idToken = $input['idToken'] ?? null;
 
+  // Debug: Log received data
+  error_log("Google Auth - Token received: " . ($idToken ? "Yes (length: " . strlen($idToken) . ")" : "No"));
+
   if (!$idToken) {
     Response::error('ID token is required', 400);
+    return;
   }
 
   try {
+    // Debug: Log client ID being used
+    error_log("Google Auth - Using Client ID: " . substr(GOOGLE_CLIENT_ID, 0, 20) . "...");
+
     // Verify Google ID token
     $client = new Client(['client_id' => GOOGLE_CLIENT_ID]);
     $payload = $client->verifyIdToken($idToken);
 
+    error_log("Google Auth - Payload: " . ($payload ? json_encode($payload) : "null"));
+
     if (!$payload) {
-      Response::error('Invalid ID token', 401);
+      Response::error('Invalid ID token - verification returned null', 401);
+      return;
     }
 
     $googleId = $payload['sub'];
