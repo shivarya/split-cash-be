@@ -32,6 +32,8 @@ function createGroup()
   $input = getJsonInput();
   $name = $input['name'] ?? null;
   $description = $input['description'] ?? '';
+  $category = $input['category'] ?? 'general';
+  $image = $input['image'] ?? null;
 
   if (!$name)
     Response::error('Group name is required', 400);
@@ -39,25 +41,30 @@ function createGroup()
   try {
     $db = getDB();
     $groupId = $db->insert(
-      'INSERT INTO expense_groups (name, description, created_by, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
-      [$name, $description, $tokenData['userId']]
+      'INSERT INTO expense_groups (name, description, category, image, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())',
+      [$name, $description, $category, $image, $tokenData['userId']]
     );
 
-    // Add creator as member
+    // Add creator as admin member
     $db->insert(
-      'INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, NOW())',
-      [$groupId, $tokenData['userId']]
+      'INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, ?, NOW())',
+      [$groupId, $tokenData['userId'], 'admin']
+    );
+
+    // Log activity
+    $db->insert(
+      'INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?, ?)',
+      [$groupId, $tokenData['userId'], 'create_group', 'group', $groupId, "Created group \"$name\""]
     );
 
     $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
 
     Response::success([
-      'group' => [
-        'id' => (int) $group['id'],
-        'name' => $group['name'],
-        'description' => $group['description'],
-        'created_by' => (int) $group['created_by']
-      ]
+      'id' => (int) $group['id'],
+      'name' => $group['name'],
+      'description' => $group['description'],
+      'category' => $group['category'],
+      'image' => $group['image']
     ], 'Group created successfully', 201);
 
   } catch (Exception $e) {
@@ -72,25 +79,36 @@ function getGroups()
     Response::error('Unauthorized', 401);
 
   try {
-    $db = getDB();
-    $groups = $db->fetchAll(
-      'SELECT g.* FROM expense_groups g
-             INNER JOIN group_members gm ON g.id = gm.group_id
-             WHERE gm.user_id = ?
-             ORDER BY g.updated_at DESC',
-      [$tokenData['userId']]
-    );
+    $db = getDB()->getConnection();
+    $stmt = $db->prepare('
+      SELECT 
+        g.id, g.name, g.description, g.category, g.image, g.created_at,
+        gm.role,
+        COUNT(DISTINCT gm2.user_id) as member_count
+      FROM expense_groups g
+      INNER JOIN group_members gm ON g.id = gm.group_id
+      LEFT JOIN group_members gm2 ON g.id = gm2.group_id
+      WHERE gm.user_id = ?
+      GROUP BY g.id, g.name, g.description, g.category, g.image, g.created_at, gm.role
+      ORDER BY g.updated_at DESC
+    ');
+    $stmt->execute([$tokenData['userId']]);
+    $groups = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $result = array_map(function ($group) {
       return [
         'id' => (int) $group['id'],
         'name' => $group['name'],
         'description' => $group['description'],
-        'created_by' => (int) $group['created_by']
+        'category' => $group['category'],
+        'image' => $group['image'],
+        'created_at' => $group['created_at'],
+        'role' => $group['role'],
+        'member_count' => (int) $group['member_count']
       ];
     }, $groups);
 
-    Response::success(['groups' => $result]);
+    Response::success($result);
 
   } catch (Exception $e) {
     Response::error('Failed to get groups: ' . $e->getMessage(), 500);
