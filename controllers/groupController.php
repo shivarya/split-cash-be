@@ -209,10 +209,24 @@ function inviteMembers($groupId)
     Response::error('Unauthorized', 401);
 
   $input = getJsonInput();
-  $emails = $input['emails'] ?? [];
+  // Accept either a single string `email` or an array `emails`
+  if (isset($input['email']) && !isset($input['emails'])) {
+    $input['emails'] = [$input['email']];
+  }
+
+  $rawEmails = $input['emails'] ?? [];
+  if (is_string($rawEmails)) {
+    $rawEmails = [$rawEmails];
+  }
+
+  // Normalize, trim, and validate emails
+  $emails = array_values(array_filter(array_map(function ($e) {
+    $e = trim((string) $e);
+    return filter_var($e, FILTER_VALIDATE_EMAIL) ? $e : null;
+  }, $rawEmails)));
 
   if (empty($emails))
-    Response::error('At least one email is required', 400);
+    Response::error('At least one valid email is required', 400);
 
   try {
     $db = getDB();
