@@ -25,10 +25,10 @@ function handleBalanceRoutes($uri, $method)
   $userId = $decoded['userId'];
 
   // Route handling
-  if ($method === 'GET' && $uri === '/balances') {
+  if ($method === 'GET' && ($uri === '/balances' || $uri === '/balances/')) {
     getBalances($userId);
   } else {
-    Response::error('Route not found', 404);
+    Response::error("Route not found: $method $uri", 404);
   }
 }
 
