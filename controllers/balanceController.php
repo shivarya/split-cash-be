@@ -42,7 +42,7 @@ function getBalances($userId)
     // Get all groups the user is part of
     $stmt = $db->prepare("
       SELECT DISTINCT g.id, g.name 
-      FROM groups g
+      FROM expense_groups g
       INNER JOIN group_members gm ON g.id = gm.group_id
       WHERE gm.user_id = ?
     ");
