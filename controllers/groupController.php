@@ -246,8 +246,8 @@ function inviteMembers($groupId)
         [$groupId, $email, $tokenData['userId'], $token]
       );
 
-      // Send invitation email (implement if needed)
-      // sendInvitationEmail($email, $group['name'], $token);
+      // Try sending invitation email; ignore failure but log it
+      sendInvitationEmail($email, $group['name'], $token);
     }
 
     Response::success(null, 'Invitations sent successfully');
@@ -296,5 +296,25 @@ function acceptInvitation()
 
   } catch (Exception $e) {
     Response::error('Failed to accept invitation: ' . $e->getMessage(), 500);
+  }
+}
+
+function sendInvitationEmail($toEmail, $groupName, $token)
+{
+  // Build a basic invite link (frontend should handle the token). Adjust if you have a dedicated invite URL.
+  $inviteUrl = FRONTEND_URL . '/invite?token=' . urlencode($token);
+
+  $subject = 'You have been invited to join a Split Cash group';
+  $message = "Hello,\n\nYou have been invited to join the group: {$groupName}.\n\nAccept the invite: {$inviteUrl}\n\nIf you did not expect this, you can ignore this email.";
+
+  $headers = [];
+  $headers[] = 'From: ' . EMAIL_FROM;
+  $headers[] = 'Reply-To: ' . EMAIL_FROM_ADDRESS;
+  $headers[] = 'Content-Type: text/plain; charset=UTF-8';
+
+  $success = @mail($toEmail, $subject, $message, implode("\r\n", $headers));
+
+  if (!$success) {
+    error_log('Failed to send invitation email to ' . $toEmail . ' token ' . $token);
   }
 }
