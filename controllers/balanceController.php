@@ -15,12 +15,14 @@ function handleBalanceRoutes($uri, $method)
   }
 
   $token = $matches[1];
-  $userId = JWT::verify($token);
+  $decoded = JWTHandler::verify($token);
 
-  if (!$userId) {
+  if (!$decoded) {
     Response::error('Unauthorized - Invalid token', 401);
     return;
   }
+
+  $userId = $decoded['userId'];
 
   // Route handling
   if ($method === 'GET' && $uri === '/balances') {
