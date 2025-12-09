@@ -38,7 +38,8 @@ define('EMAIL_FROM_ADDRESS', getenv('EMAIL_USER') ?: 'splitcash@shivarya.dev');
 define('EMAIL_FROM', getenv('EMAIL_FROM') ?: 'Split Cash <splitcash@shivarya.dev>');
 
 // Frontend URL
-define('FRONTEND_URL', getenv('FRONTEND_URL') ?: 'https://shivarya.github.io/split-cash');
+// Public landing URL (used for invite links). Set FRONTEND_URL in .env if different.
+define('FRONTEND_URL', getenv('FRONTEND_URL') ?: 'https://shivarya.dev/split_cash');
 
 // App URLs
 define('WEBSITE_URL', getenv('WEBSITE_URL') ?: 'https://shivarya.github.io/split-cash');

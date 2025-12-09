@@ -301,11 +301,12 @@ function acceptInvitation()
 
 function sendInvitationEmail($toEmail, $groupName, $token)
 {
-  // Build a basic invite link (frontend should handle the token). Adjust if you have a dedicated invite URL.
-  $inviteUrl = FRONTEND_URL . '/invite?token=' . urlencode($token);
+  // Web landing and app deep link
+  $inviteUrl = rtrim(FRONTEND_URL, '/') . '/invite?token=' . urlencode($token);
+  $deepLink = 'splitcash://invite/' . urlencode($token);
 
   $subject = 'You have been invited to join a Split Cash group';
-  $message = "Hello,\n\nYou have been invited to join the group: {$groupName}.\n\nAccept the invite: {$inviteUrl}\n\nIf you did not expect this, you can ignore this email.";
+  $message = "Hello,\n\nYou have been invited to join the group: {$groupName}.\n\nOpen the app: {$deepLink}\nOr accept via web: {$inviteUrl}\n\nIf you did not expect this, you can ignore this email.";
 
   $headers = [];
   $headers[] = 'From: ' . EMAIL_FROM;
