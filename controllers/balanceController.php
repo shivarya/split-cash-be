@@ -37,7 +37,7 @@ function handleBalanceRoutes($uri, $method)
 function getBalances($userId)
 {
   try {
-    $db = getDB();
+    $db = getDB()->getConnection();
 
     // Get all groups the user is part of
     $stmt = $db->prepare("
