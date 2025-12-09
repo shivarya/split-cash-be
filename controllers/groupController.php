@@ -240,10 +240,10 @@ function inviteMembers($groupId)
       // Generate invitation token
       $token = bin2hex(random_bytes(32));
 
-      // Store invitation
+      // Store invitation with inviter and expiry (7 days)
       $db->insert(
-        'INSERT INTO invitations (group_id, email, token, created_at) VALUES (?, ?, ?, NOW())',
-        [$groupId, $email, $token]
+        'INSERT INTO invitations (group_id, email, invited_by, token, expires_at, created_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())',
+        [$groupId, $email, $tokenData['userId'], $token]
       );
 
       // Send invitation email (implement if needed)
