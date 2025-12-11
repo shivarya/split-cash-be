@@ -59,6 +59,35 @@ if (isset($_GET['url'])) {
 }
 $uri = $uri ?: '/';
 
+// Handle invite deep link landing page to open the app (or fallback to web)
+if ($uri === '/invite') {
+  $token = isset($_GET['token']) ? trim($_GET['token']) : '';
+  $deepLink = $token ? 'splitcash://invite/' . urlencode($token) : 'splitcash://';
+  $webFallback = rtrim(FRONTEND_URL, '/') . ($token ? '/invite?token=' . urlencode($token) : '/');
+
+  header('Content-Type: text/html; charset=utf-8');
+  header('Cache-Control: no-cache, no-store, must-revalidate');
+  header('Pragma: no-cache');
+  header('Expires: 0');
+
+  // Try to open the app immediately
+  header('Location: ' . $deepLink);
+
+  echo '<!DOCTYPE html><html><head><meta charset="utf-8">';
+  echo '<meta http-equiv="refresh" content="0;url=' . htmlspecialchars($deepLink, ENT_QUOTES) . '">';
+  echo '<title>Opening Split Cash...</title>';
+  echo '</head><body style="font-family: sans-serif; text-align: center; padding: 2rem;">';
+  if ($token) {
+    echo '<p>Opening Split Cash to join your invite...</p>';
+  } else {
+    echo '<p>Opening Split Cash...</p>';
+  }
+  echo '<p>If nothing happens, <a href="' . htmlspecialchars($deepLink, ENT_QUOTES) . '">tap here</a>. If the app is not installed, <a href="' . htmlspecialchars($webFallback, ENT_QUOTES) . '">open the web version</a>.</p>';
+  echo '<script>setTimeout(function(){ window.location.href = ' . json_encode($deepLink) . '; setTimeout(function(){ window.location.href = ' . json_encode($webFallback) . '; }, 1500); }, 50);</script>';
+  echo '</body></html>';
+  exit;
+}
+
 // Route the request
 try {
   // Health check
