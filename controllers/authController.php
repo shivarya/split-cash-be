@@ -79,6 +79,9 @@ function googleAuth()
       $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$user['id']]);
     }
 
+    // Auto-accept any pending invitations for this email (ensures newly invited users see the group immediately)
+    acceptPendingInvitations($db, (int) $user['id'], $user['email']);
+
     // Generate JWT token
     $token = JWTHandler::generate($user['id'], $user['email']);
 
@@ -174,4 +177,28 @@ function sendWelcomeEmail($email, $name)
 {
   // Email sending implementation (optional for now)
   // Can be implemented later using PHP mail() or PHPMailer
+}
+
+// Accept and clear any pending invitations for the authenticated user by email.
+function acceptPendingInvitations($db, $userId, $email)
+{
+  // Fetch pending, non-expired invitations for this email
+  $invitations = $db->fetchAll(
+    'SELECT id, group_id FROM invitations WHERE email = ? AND expires_at > NOW()',
+    [$email]
+  );
+
+  if (!$invitations)
+    return;
+
+  foreach ($invitations as $invitation) {
+    // Add user to group; ignore if already a member
+    $db->insert(
+      'INSERT IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, NOW())',
+      [$invitation['group_id'], $userId]
+    );
+
+    // Delete invitation after successful join
+    $db->execute('DELETE FROM invitations WHERE id = ?', [$invitation['id']]);
+  }
 }
