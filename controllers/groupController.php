@@ -23,6 +23,25 @@ function handleGroupRoutes($uri, $method)
   }
 }
 
+function handleInvitationRoutes($uri, $method)
+{
+  $parts = explode('/', trim($uri, '/'));
+
+  // /invitations/{token}
+  if (count($parts) === 2 && $method === 'GET') {
+    $token = $parts[1];
+    return getInvitationByToken($token);
+  }
+
+  // /invitations/{token}/accept
+  if (count($parts) === 3 && $parts[2] === 'accept' && $method === 'POST') {
+    $token = $parts[1];
+    return acceptInvitationByToken($token);
+  }
+
+  Response::error('Route not found', 404);
+}
+
 function createGroup()
 {
   $tokenData = JWTHandler::getUserFromToken();
@@ -296,6 +315,75 @@ function acceptInvitation()
 
   } catch (Exception $e) {
     Response::error('Failed to accept invitation: ' . $e->getMessage(), 500);
+  }
+}
+
+function acceptInvitationByToken($token)
+{
+  $tokenData = JWTHandler::getUserFromToken();
+  if (!$tokenData)
+    Response::error('Unauthorized', 401);
+
+  if (!$token)
+    Response::error('Invitation token is required', 400);
+
+  try {
+    $db = getDB();
+
+    $invitation = $db->fetchOne(
+      'SELECT * FROM invitations WHERE token = ? AND expires_at > NOW()',
+      [$token]
+    );
+
+    if (!$invitation)
+      Response::error('Invalid or expired invitation', 404);
+
+    // Add user to group
+    $db->insert(
+      'INSERT IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, NOW())',
+      [$invitation['group_id'], $tokenData['userId']]
+    );
+
+    // Delete invitation after successful join
+    $db->execute('DELETE FROM invitations WHERE id = ?', [$invitation['id']]);
+
+    Response::success([
+      'groupId' => (int) $invitation['group_id']
+    ], 'Invitation accepted successfully');
+
+  } catch (Exception $e) {
+    Response::error('Failed to accept invitation: ' . $e->getMessage(), 500);
+  }
+}
+
+function getInvitationByToken($token)
+{
+  if (!$token)
+    Response::error('Invitation token is required', 400);
+
+  try {
+    $db = getDB();
+
+    $invitation = $db->fetchOne(
+      'SELECT i.id, i.group_id, i.email, i.expires_at, g.name AS group_name
+         FROM invitations i
+         INNER JOIN expense_groups g ON g.id = i.group_id
+        WHERE i.token = ? AND i.expires_at > NOW()',
+      [$token]
+    );
+
+    if (!$invitation)
+      Response::error('Invalid or expired invitation', 404);
+
+    Response::success([
+      'groupId' => (int) $invitation['group_id'],
+      'groupName' => $invitation['group_name'],
+      'email' => $invitation['email'],
+      'expiresAt' => $invitation['expires_at']
+    ]);
+
+  } catch (Exception $e) {
+    Response::error('Failed to fetch invitation: ' . $e->getMessage(), 500);
   }
 }
 

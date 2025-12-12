@@ -106,6 +106,13 @@ try {
     exit;
   }
 
+  // Invitation token routes (public metadata, protected acceptance)
+  if (strpos($uri, '/invitations') === 0) {
+    require_once __DIR__ . '/controllers/groupController.php';
+    handleInvitationRoutes($uri, $requestMethod);
+    exit;
+  }
+
   // Auth routes
   if (strpos($uri, '/auth') === 0) {
     require_once __DIR__ . '/controllers/authController.php';
