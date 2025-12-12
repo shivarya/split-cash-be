@@ -157,9 +157,9 @@ function getGroupDetails($groupId)
     if (!$group)
       Response::error('Group not found', 404);
 
-    // Get members
+    // Get members with roles
     $members = $db->fetchAll(
-      'SELECT u.id, u.name, u.email, u.profile_picture
+      'SELECT u.id, u.name, u.email, u.profile_picture, gm.role
              FROM users u
              INNER JOIN group_members gm ON u.id = gm.user_id
              WHERE gm.group_id = ?',
@@ -167,20 +167,22 @@ function getGroupDetails($groupId)
     );
 
     Response::success([
-      'group' => [
-        'id' => (int) $group['id'],
-        'name' => $group['name'],
-        'description' => $group['description'],
-        'created_by' => (int) $group['created_by'],
-        'members' => array_map(function ($m) {
-          return [
-            'id' => (int) $m['id'],
-            'name' => $m['name'],
-            'email' => $m['email'],
-            'profile_picture' => $m['profile_picture']
-          ];
-        }, $members)
-      ]
+      'id' => (int) $group['id'],
+      'name' => $group['name'],
+      'description' => $group['description'],
+      'category' => $group['category'],
+      'image' => $group['image'],
+      'created_by' => (int) $group['created_by'],
+      'userRole' => $member['role'],
+      'members' => array_map(function ($m) {
+        return [
+          'id' => (int) $m['id'],
+          'name' => $m['name'],
+          'email' => $m['email'],
+          'profile_picture' => $m['profile_picture'],
+          'role' => $m['role']
+        ];
+      }, $members)
     ]);
 
   } catch (Exception $e) {
