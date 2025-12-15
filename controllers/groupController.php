@@ -108,7 +108,7 @@ function getGroups()
 
   try {
     $db = getDB();
-    
+
     // First, auto-accept any pending invitations for user's email
     $userEmail = $db->fetchOne('SELECT email FROM users WHERE id = ?', [$tokenData['userId']]);
     if ($userEmail && $userEmail['email']) {
@@ -127,7 +127,7 @@ function getGroups()
         $db->execute('DELETE FROM invitations WHERE id = ?', [$invitation['id']]);
       }
     }
-    
+
     // Now fetch all groups
     $conn = $db->getConnection();
     $stmt = $conn->prepare('
@@ -476,14 +476,14 @@ function leaveGroup($groupId)
         'SELECT COUNT(*) as count FROM group_members WHERE group_id = ? AND role = "admin"',
         [$groupId]
       );
-      
-      if ($adminCount && (int)$adminCount['count'] <= 1) {
+
+      if ($adminCount && (int) $adminCount['count'] <= 1) {
         // Check if there are other members to promote
         $otherMembers = $db->fetchAll(
           'SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ? LIMIT 1',
           [$groupId, $tokenData['userId']]
         );
-        
+
         if (!empty($otherMembers)) {
           // Promote another member to admin
           $db->execute(
@@ -536,8 +536,8 @@ function addMemberByEmail($groupId)
       'SELECT COUNT(*) as count FROM invitations WHERE group_id = ? AND invited_by = ? AND created_at > ?',
       [$groupId, $tokenData['userId'], $oneHourAgo]
     );
-    
-    if ($recentInvites && (int)$recentInvites['count'] >= 5) {
+
+    if ($recentInvites && (int) $recentInvites['count'] >= 5) {
       Response::error('Too many invitations sent. Please wait before sending more.', 429);
     }
 
@@ -546,8 +546,8 @@ function addMemberByEmail($groupId)
       'SELECT COUNT(*) as count FROM group_members WHERE group_id = ?',
       [$groupId]
     );
-    
-    if ($memberCount && (int)$memberCount['count'] >= 50) {
+
+    if ($memberCount && (int) $memberCount['count'] >= 50) {
       Response::error('Group has reached maximum member limit (50 members)', 400);
     }
 
