@@ -46,17 +46,18 @@ function getMyBalances($userId)
   try {
     $db = getDB()->getConnection();
 
-    // Get all groups the user is part of with balances
+    // Get all groups the user is part of with balances (only active memberships)
     $stmt = $db->prepare("
       SELECT 
         g.id as group_id,
         g.name as group_name,
         g.category,
         g.image,
-        COUNT(DISTINCT gm.user_id) as member_count
+        COUNT(DISTINCT CASE WHEN gm2.status = 'active' THEN gm2.user_id END) as member_count
       FROM expense_groups g
       INNER JOIN group_members gm ON g.id = gm.group_id
-      WHERE gm.user_id = ?
+      LEFT JOIN group_members gm2 ON g.id = gm2.group_id
+      WHERE gm.user_id = ? AND gm.status = 'active'
       GROUP BY g.id, g.name, g.category, g.image
       ORDER BY g.updated_at DESC
     ");
@@ -107,10 +108,11 @@ function getGroupBalances($groupId, $userId)
   try {
     $db = getDB()->getConnection();
 
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
+    // Check if user is a member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
     $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
       Response::error('You are not a member of this group', 403);
     }
 
@@ -238,10 +240,11 @@ function getSettlementHistory($groupId, $userId)
   try {
     $db = getDB()->getConnection();
 
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
+    // Check if user is member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
     $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
       Response::error('You are not a member of this group', 403);
     }
 
@@ -300,10 +303,11 @@ function recordSettlement($groupId, $userId)
   try {
     $db = getDB()->getConnection();
 
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
+    // Check if user is member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
     $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
       Response::error('You are not a member of this group', 403);
     }
 
@@ -344,10 +348,11 @@ function getGroupActivity($groupId, $userId)
   try {
     $db = getDB()->getConnection();
 
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
+    // Check if user is member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
     $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
       Response::error('You are not a member of this group', 403);
     }
 

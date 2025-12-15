@@ -43,12 +43,15 @@ CREATE TABLE IF NOT EXISTS group_members (
   group_id INT NOT NULL,
   user_id INT NOT NULL,
   role ENUM('admin', 'member') DEFAULT 'member',
+  status ENUM('active', 'left') DEFAULT 'active',
   joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  left_at TIMESTAMP NULL,
   FOREIGN KEY (group_id) REFERENCES expense_groups(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   UNIQUE KEY unique_group_member (group_id, user_id),
   INDEX idx_group_id (group_id),
-  INDEX idx_user_id (user_id)
+  INDEX idx_user_id (user_id),
+  INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Create expenses table
@@ -154,6 +157,12 @@ CREATE TABLE IF NOT EXISTS activities (
   INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Migration: Add status column to group_members (if not exists)
+ALTER TABLE group_members 
+  ADD COLUMN IF NOT EXISTS status ENUM('active', 'left') DEFAULT 'active' AFTER role,
+  ADD COLUMN IF NOT EXISTS left_at TIMESTAMP NULL AFTER joined_at,
+  ADD INDEX IF NOT EXISTS idx_status (status);
+
 -- Record migration execution
 INSERT INTO migrations (name) VALUES 
   ('001_create_users_table'),
@@ -164,5 +173,6 @@ INSERT INTO migrations (name) VALUES
   ('006_create_balances_table'),
   ('007_create_settlements_table'),
   ('008_create_invitations_table'),
-  ('009_create_activities_table')
+  ('009_create_activities_table'),
+  ('010_add_group_members_status')
 ON DUPLICATE KEY UPDATE name=name;

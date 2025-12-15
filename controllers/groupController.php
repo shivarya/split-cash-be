@@ -25,6 +25,9 @@ function handleGroupRoutes($uri, $method)
   } elseif (count($parts) == 3 && $parts[2] === 'leave' && $method === 'POST') {
     $groupId = $parts[1];
     leaveGroup($groupId);
+  } elseif (count($parts) == 3 && $parts[2] === 'rejoin' && $method === 'POST') {
+    $groupId = $parts[1];
+    rejoinGroup($groupId);
   } elseif (count($parts) == 2 && $parts[1] === 'accept-invitation' && $method === 'POST') {
     acceptInvitation();
   } else {
@@ -128,19 +131,19 @@ function getGroups()
       }
     }
 
-    // Now fetch all groups
+    // Now fetch all groups (including left groups)
     $conn = $db->getConnection();
     $stmt = $conn->prepare('
       SELECT 
         g.id, g.name, g.description, g.category, g.image, g.created_at,
-        gm.role,
-        COUNT(DISTINCT gm2.user_id) as member_count
+        gm.role, gm.status,
+        COUNT(DISTINCT CASE WHEN gm2.status = "active" THEN gm2.user_id END) as member_count
       FROM expense_groups g
       INNER JOIN group_members gm ON g.id = gm.group_id
       LEFT JOIN group_members gm2 ON g.id = gm2.group_id
       WHERE gm.user_id = ?
-      GROUP BY g.id, g.name, g.description, g.category, g.image, g.created_at, gm.role
-      ORDER BY g.updated_at DESC
+      GROUP BY g.id, g.name, g.description, g.category, g.image, g.created_at, gm.role, gm.status
+      ORDER BY gm.status ASC, g.updated_at DESC
     ');
     $stmt->execute([$tokenData['userId']]);
     $groups = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -154,6 +157,7 @@ function getGroups()
         'image' => $group['image'],
         'created_at' => $group['created_at'],
         'role' => $group['role'],
+        'status' => $group['status'],
         'member_count' => (int) $group['member_count']
       ];
     }, $groups);
@@ -176,24 +180,27 @@ function getGroupDetails($groupId)
 
     // Check if user is a member
     $member = $db->fetchOne(
-      'SELECT * FROM group_members WHERE group_id = ? AND user_id = ?',
+      'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
       [$groupId, $tokenData['userId']]
     );
 
     if (!$member)
       Response::error('You are not a member of this group', 403);
 
+    if ($member['status'] === 'left')
+      Response::error('You have left this group. Please rejoin to view details.', 403);
+
     $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
 
     if (!$group)
       Response::error('Group not found', 404);
 
-    // Get members with roles
+    // Get members with roles (only active members)
     $members = $db->fetchAll(
       'SELECT u.id, u.name, u.email, u.profile_picture, gm.role
              FROM users u
              INNER JOIN group_members gm ON u.id = gm.user_id
-             WHERE gm.group_id = ?',
+             WHERE gm.group_id = ? AND gm.status = "active"',
       [$groupId]
     );
 
@@ -435,11 +442,14 @@ function deleteGroup($groupId)
       Response::error('Group not found', 404);
 
     $member = $db->fetchOne(
-      'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+      'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
       [$groupId, $tokenData['userId']]
     );
 
-    if (!$member || $member['role'] !== 'admin')
+    if (!$member || $member['status'] === 'left')
+      Response::error('You are not a member of this group', 403);
+
+    if ($member['role'] !== 'admin')
       Response::error('Only group admin can delete the group', 403);
 
     // Delete group (cascade will delete all related records)
@@ -463,24 +473,27 @@ function leaveGroup($groupId)
 
     // Check if user is a member
     $member = $db->fetchOne(
-      'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+      'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
       [$groupId, $tokenData['userId']]
     );
 
     if (!$member)
       Response::error('You are not a member of this group', 404);
 
+    if ($member['status'] === 'left')
+      Response::error('You have already left this group', 400);
+
     // Check if user is the only admin
     if ($member['role'] === 'admin') {
       $adminCount = $db->fetchOne(
-        'SELECT COUNT(*) as count FROM group_members WHERE group_id = ? AND role = "admin"',
+        'SELECT COUNT(*) as count FROM group_members WHERE group_id = ? AND role = "admin" AND status = "active"',
         [$groupId]
       );
 
       if ($adminCount && (int) $adminCount['count'] <= 1) {
         // Check if there are other members to promote
         $otherMembers = $db->fetchAll(
-          'SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ? LIMIT 1',
+          'SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ? AND status = "active" LIMIT 1',
           [$groupId, $tokenData['userId']]
         );
 
@@ -494,11 +507,9 @@ function leaveGroup($groupId)
       }
     }
 
-    // Don't delete the member - this preserves transaction history
-    // Instead, remove them from active membership while keeping expense records intact
-    // We delete the group_members entry but expenses remain linked to the user_id
+    // Mark user as left instead of deleting - this preserves transaction history
     $db->execute(
-      'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
+      'UPDATE group_members SET status = "left", left_at = NOW() WHERE group_id = ? AND user_id = ?',
       [$groupId, $tokenData['userId']]
     );
 
@@ -512,6 +523,46 @@ function leaveGroup($groupId)
 
   } catch (Exception $e) {
     Response::error('Failed to leave group: ' . $e->getMessage(), 500);
+  }
+}
+
+function rejoinGroup($groupId)
+{
+  $tokenData = JWTHandler::getUserFromToken();
+  if (!$tokenData)
+    Response::error('Unauthorized', 401);
+
+  try {
+    $db = getDB();
+
+    // Check if user was a member who left
+    $member = $db->fetchOne(
+      'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
+      [$groupId, $tokenData['userId']]
+    );
+
+    if (!$member)
+      Response::error('You were never a member of this group', 404);
+
+    if ($member['status'] === 'active')
+      Response::error('You are already an active member of this group', 400);
+
+    // Reactivate membership
+    $db->execute(
+      'UPDATE group_members SET status = "active", left_at = NULL WHERE group_id = ? AND user_id = ?',
+      [$groupId, $tokenData['userId']]
+    );
+
+    // Log activity
+    $db->insert(
+      'INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?, ?)',
+      [$groupId, $tokenData['userId'], 'rejoin_group', 'group', $groupId, "Rejoined the group"]
+    );
+
+    Response::success(null, 'You have rejoined the group successfully');
+
+  } catch (Exception $e) {
+    Response::error('Failed to rejoin group: ' . $e->getMessage(), 500);
   }
 }
 
@@ -553,11 +604,11 @@ function addMemberByEmail($groupId)
 
     // Check if user is group member
     $member = $db->fetchOne(
-      'SELECT * FROM group_members WHERE group_id = ? AND user_id = ?',
+      'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
       [$groupId, $tokenData['userId']]
     );
 
-    if (!$member)
+    if (!$member || $member['status'] === 'left')
       Response::error('You are not a member of this group', 403);
 
     $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
@@ -573,19 +624,27 @@ function addMemberByEmail($groupId)
 
       // Check if already a member
       $existing = $db->fetchOne(
-        'SELECT id FROM group_members WHERE group_id = ? AND user_id = ?',
+        'SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?',
         [$groupId, $userId]
       );
 
-      if ($existing) {
+      if ($existing && $existing['status'] === 'active') {
         Response::error('User is already a member of this group', 400);
       }
 
-      // Add user to group
-      $db->insert(
-        'INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, ?, NOW())',
-        [$groupId, $userId, 'member']
-      );
+      if ($existing && $existing['status'] === 'left') {
+        // Reactivate their membership instead of creating new
+        $db->execute(
+          'UPDATE group_members SET status = "active", left_at = NULL WHERE group_id = ? AND user_id = ?',
+          [$groupId, $userId]
+        );
+      } else {
+        // Add user to group
+        $db->insert(
+          'INSERT INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, "active", NOW())',
+          [$groupId, $userId, 'member']
+        );
+      }
 
       // Log activity
       $db->insert(

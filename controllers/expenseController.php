@@ -58,15 +58,16 @@ function createExpense($groupId)
   try {
     $db = getDB()->getConnection();
 
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
+    // Check if user is member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
     $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
       Response::error('You are not a member of this group', 403);
     }
 
-    // Get group members
-    $stmt = $db->prepare('SELECT user_id FROM group_members WHERE group_id = ?');
+    // Get group members (only active members)
+    $stmt = $db->prepare('SELECT user_id FROM group_members WHERE group_id = ? AND status = "active"');
     $stmt->execute([$groupId]);
     $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $memberIds = array_column($members, 'user_id');
@@ -181,10 +182,11 @@ function getGroupExpenses($groupId)
   try {
     $db = getDB()->getConnection();
 
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
+    // Check if user is member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
     $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
       Response::error('You are not a member of this group', 403);
     }
 
@@ -315,15 +317,19 @@ function deleteExpense($expenseId)
       Response::error('Expense not found', 404);
     }
 
-    // Check if user created the expense or is group admin
+    // Check if user created the expense or is group admin (and is active member)
     $stmt = $db->prepare('
-      SELECT role FROM group_members 
+      SELECT role, status FROM group_members 
       WHERE group_id = ? AND user_id = ?
     ');
     $stmt->execute([$expense['group_id'], $userId]);
     $member = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if ($expense['paid_by'] != $userId && (!$member || $member['role'] !== 'admin')) {
+    if (!$member || $member['status'] === 'left') {
+      Response::error('You are not a member of this group', 403);
+    }
+
+    if ($expense['paid_by'] != $userId && $member['role'] !== 'admin') {
       Response::error('Only the creator or group admin can delete this expense', 403);
     }
 
