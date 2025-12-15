@@ -43,6 +43,7 @@ function createExpense($groupId)
   $category = $input['category'] ?? 'general';
   $date = $input['date'] ?? null;
   $notes = $input['notes'] ?? null;
+  $paidBy = $input['paid_by'] ?? $userId; // Use paid_by from input, default to current user
   $splitType = $input['splitType'] ?? 'equal';
   $splits = $input['splits'] ?? [];
 
@@ -71,6 +72,11 @@ function createExpense($groupId)
     $stmt->execute([$groupId]);
     $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $memberIds = array_column($members, 'user_id');
+
+    // Validate that paidBy user is an active member of the group
+    if (!in_array($paidBy, $memberIds)) {
+      Response::error('The person who paid must be an active member of this group', 400);
+    }
 
     // Calculate splits
     $expenseSplits = [];
@@ -125,7 +131,7 @@ function createExpense($groupId)
         INSERT INTO expenses (group_id, description, amount, category, paid_by, split_type, date, notes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ');
-      $stmt->execute([$groupId, $description, $amount, $category, $userId, $splitType, $date, $notes]);
+      $stmt->execute([$groupId, $description, $amount, $category, $paidBy, $splitType, $date, $notes]);
       $expenseId = $db->lastInsertId();
 
       // Insert splits
