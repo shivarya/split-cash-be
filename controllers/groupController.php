@@ -10,12 +10,21 @@ function handleGroupRoutes($uri, $method)
   } elseif (count($parts) == 2 && $method === 'GET') {
     $groupId = $parts[1];
     getGroupDetails($groupId);
+  } elseif (count($parts) == 2 && $method === 'DELETE') {
+    $groupId = $parts[1];
+    deleteGroup($groupId);
   } elseif (count($parts) == 3 && $parts[2] === 'members' && $method === 'GET') {
     $groupId = $parts[1];
     getGroupMembers($groupId);
   } elseif (count($parts) == 3 && $parts[2] === 'invite' && $method === 'POST') {
     $groupId = $parts[1];
     inviteMembers($groupId);
+  } elseif (count($parts) == 3 && $parts[2] === 'add-member' && $method === 'POST') {
+    $groupId = $parts[1];
+    addMemberByEmail($groupId);
+  } elseif (count($parts) == 3 && $parts[2] === 'leave' && $method === 'POST') {
+    $groupId = $parts[1];
+    leaveGroup($groupId);
   } elseif (count($parts) == 2 && $parts[1] === 'accept-invitation' && $method === 'POST') {
     acceptInvitation();
   } else {
@@ -98,8 +107,30 @@ function getGroups()
     Response::error('Unauthorized', 401);
 
   try {
-    $db = getDB()->getConnection();
-    $stmt = $db->prepare('
+    $db = getDB();
+    
+    // First, auto-accept any pending invitations for user's email
+    $userEmail = $db->fetchOne('SELECT email FROM users WHERE id = ?', [$tokenData['userId']]);
+    if ($userEmail && $userEmail['email']) {
+      $pendingInvitations = $db->fetchAll(
+        'SELECT id, group_id FROM invitations WHERE email = ? AND expires_at > NOW()',
+        [$userEmail['email']]
+      );
+
+      foreach ($pendingInvitations as $invitation) {
+        // Add user to group if not already a member
+        $db->insert(
+          'INSERT IGNORE INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, ?, NOW())',
+          [$invitation['group_id'], $tokenData['userId'], 'member']
+        );
+        // Delete the invitation
+        $db->execute('DELETE FROM invitations WHERE id = ?', [$invitation['id']]);
+      }
+    }
+    
+    // Now fetch all groups
+    $conn = $db->getConnection();
+    $stmt = $conn->prepare('
       SELECT 
         g.id, g.name, g.description, g.category, g.image, g.created_at,
         gm.role,
@@ -386,6 +417,201 @@ function getInvitationByToken($token)
 
   } catch (Exception $e) {
     Response::error('Failed to fetch invitation: ' . $e->getMessage(), 500);
+  }
+}
+
+function deleteGroup($groupId)
+{
+  $tokenData = JWTHandler::getUserFromToken();
+  if (!$tokenData)
+    Response::error('Unauthorized', 401);
+
+  try {
+    $db = getDB();
+
+    // Check if user is group admin or creator
+    $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
+    if (!$group)
+      Response::error('Group not found', 404);
+
+    $member = $db->fetchOne(
+      'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+      [$groupId, $tokenData['userId']]
+    );
+
+    if (!$member || $member['role'] !== 'admin')
+      Response::error('Only group admin can delete the group', 403);
+
+    // Delete group (cascade will delete all related records)
+    $db->execute('DELETE FROM expense_groups WHERE id = ?', [$groupId]);
+
+    Response::success(null, 'Group deleted successfully');
+
+  } catch (Exception $e) {
+    Response::error('Failed to delete group: ' . $e->getMessage(), 500);
+  }
+}
+
+function leaveGroup($groupId)
+{
+  $tokenData = JWTHandler::getUserFromToken();
+  if (!$tokenData)
+    Response::error('Unauthorized', 401);
+
+  try {
+    $db = getDB();
+
+    // Check if user is a member
+    $member = $db->fetchOne(
+      'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+      [$groupId, $tokenData['userId']]
+    );
+
+    if (!$member)
+      Response::error('You are not a member of this group', 404);
+
+    // Check if user is the only admin
+    if ($member['role'] === 'admin') {
+      $adminCount = $db->fetchOne(
+        'SELECT COUNT(*) as count FROM group_members WHERE group_id = ? AND role = "admin"',
+        [$groupId]
+      );
+      
+      if ($adminCount && (int)$adminCount['count'] <= 1) {
+        // Check if there are other members to promote
+        $otherMembers = $db->fetchAll(
+          'SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ? LIMIT 1',
+          [$groupId, $tokenData['userId']]
+        );
+        
+        if (!empty($otherMembers)) {
+          // Promote another member to admin
+          $db->execute(
+            'UPDATE group_members SET role = "admin" WHERE group_id = ? AND user_id = ?',
+            [$groupId, $otherMembers[0]['user_id']]
+          );
+        }
+      }
+    }
+
+    // Don't delete the member - this preserves transaction history
+    // Instead, remove them from active membership while keeping expense records intact
+    // We delete the group_members entry but expenses remain linked to the user_id
+    $db->execute(
+      'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
+      [$groupId, $tokenData['userId']]
+    );
+
+    // Log activity
+    $db->insert(
+      'INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?, ?)',
+      [$groupId, $tokenData['userId'], 'leave_group', 'group', $groupId, "Left the group"]
+    );
+
+    Response::success(null, 'You have left the group successfully');
+
+  } catch (Exception $e) {
+    Response::error('Failed to leave group: ' . $e->getMessage(), 500);
+  }
+}
+
+function addMemberByEmail($groupId)
+{
+  $tokenData = JWTHandler::getUserFromToken();
+  if (!$tokenData)
+    Response::error('Unauthorized', 401);
+
+  $input = getJsonInput();
+  $email = trim($input['email'] ?? '');
+
+  if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL))
+    Response::error('Valid email is required', 400);
+
+  try {
+    $db = getDB();
+
+    // SPAM PROTECTION: Check rate limiting (max 5 invites per hour per user per group)
+    $oneHourAgo = date('Y-m-d H:i:s', strtotime('-1 hour'));
+    $recentInvites = $db->fetchOne(
+      'SELECT COUNT(*) as count FROM invitations WHERE group_id = ? AND invited_by = ? AND created_at > ?',
+      [$groupId, $tokenData['userId'], $oneHourAgo]
+    );
+    
+    if ($recentInvites && (int)$recentInvites['count'] >= 5) {
+      Response::error('Too many invitations sent. Please wait before sending more.', 429);
+    }
+
+    // SPAM PROTECTION: Check max members limit (50 members per group)
+    $memberCount = $db->fetchOne(
+      'SELECT COUNT(*) as count FROM group_members WHERE group_id = ?',
+      [$groupId]
+    );
+    
+    if ($memberCount && (int)$memberCount['count'] >= 50) {
+      Response::error('Group has reached maximum member limit (50 members)', 400);
+    }
+
+    // Check if user is group member
+    $member = $db->fetchOne(
+      'SELECT * FROM group_members WHERE group_id = ? AND user_id = ?',
+      [$groupId, $tokenData['userId']]
+    );
+
+    if (!$member)
+      Response::error('You are not a member of this group', 403);
+
+    $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
+    if (!$group)
+      Response::error('Group not found', 404);
+
+    // Check if user with this email exists
+    $targetUser = $db->fetchOne('SELECT id FROM users WHERE email = ?', [$email]);
+
+    if ($targetUser) {
+      // User exists - add them directly to group
+      $userId = $targetUser['id'];
+
+      // Check if already a member
+      $existing = $db->fetchOne(
+        'SELECT id FROM group_members WHERE group_id = ? AND user_id = ?',
+        [$groupId, $userId]
+      );
+
+      if ($existing) {
+        Response::error('User is already a member of this group', 400);
+      }
+
+      // Add user to group
+      $db->insert(
+        'INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, ?, NOW())',
+        [$groupId, $userId, 'member']
+      );
+
+      // Log activity
+      $db->insert(
+        'INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?, ?)',
+        [$groupId, $tokenData['userId'], 'add_member', 'user', $userId, "Added member via email"]
+      );
+
+      Response::success(null, 'Member added to group successfully');
+    } else {
+      // User doesn't exist - create invitation
+      $token = bin2hex(random_bytes(32));
+
+      // Store invitation
+      $db->insert(
+        'INSERT INTO invitations (group_id, email, invited_by, token, expires_at, created_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())',
+        [$groupId, $email, $tokenData['userId'], $token]
+      );
+
+      // Send invitation email
+      sendInvitationEmail($email, $group['name'], $token);
+
+      Response::success(null, 'User not registered. Invitation sent successfully');
+    }
+
+  } catch (Exception $e) {
+    Response::error('Failed to add member: ' . $e->getMessage(), 500);
   }
 }
 
