@@ -69,17 +69,13 @@ function getMyBalances($userId)
     foreach ($groups as $group) {
       $groupId = $group['group_id'];
 
-      // Get user's balance in this group
-      $stmt = $db->prepare("
-        SELECT 
-          COALESCE(SUM(CASE WHEN e.paid_by = ? THEN e.amount ELSE 0 END), 0) as total_paid,
-          COALESCE(SUM(CASE WHEN es.user_id = ? THEN es.amount ELSE 0 END), 0) as total_owed
-        FROM expenses e
-        LEFT JOIN expense_splits es ON e.id = es.expense_id
-        WHERE e.group_id = ?
-      ");
-      $stmt->execute([$userId, $userId, $groupId]);
-      $balance = $stmt->fetch(PDO::FETCH_ASSOC);
+          // Get user's balance in this group using subqueries to avoid duplicate joins
+          $stmt = $db->prepare("SELECT
+              (SELECT COALESCE(SUM(amount),0) FROM expenses e2 WHERE e2.group_id = ? AND e2.paid_by = ?) as total_paid,
+              (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = ? AND es2.user_id = ?) as total_owed
+            ");
+          $stmt->execute([$groupId, $userId, $groupId, $userId]);
+          $balance = $stmt->fetch(PDO::FETCH_ASSOC);
 
       $totalPaid = floatval($balance['total_paid']);
       $totalOwed = floatval($balance['total_owed']);
@@ -116,26 +112,21 @@ function getGroupBalances($groupId, $userId)
       Response::error('You are not a member of this group', 403);
     }
 
-    // Get balances with user info
-    $stmt = $db->prepare("
-      SELECT 
-        u.id,
-        u.name,
-        u.email,
-        u.profile_picture,
-        COALESCE(SUM(CASE WHEN e.paid_by = u.id THEN e.amount ELSE 0 END), 0) as total_paid,
-        COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0) as total_owed
-      FROM users u
-      INNER JOIN group_members gm ON u.id = gm.user_id
-      LEFT JOIN expenses e ON e.group_id = gm.group_id AND e.paid_by = u.id
-      LEFT JOIN expense_splits es ON es.expense_id = e.id AND es.user_id = u.id
-      WHERE gm.group_id = ?
-      GROUP BY u.id, u.name, u.email, u.profile_picture
-      ORDER BY (COALESCE(SUM(CASE WHEN e.paid_by = u.id THEN e.amount ELSE 0 END), 0) - 
-                COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0)) DESC
-    ");
-    $stmt->execute([$groupId]);
-    $balances = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Get balances with user info. Use subqueries per user to avoid duplicated sums from joins.
+        $stmt = $db->prepare("SELECT
+            u.id,
+            u.name,
+            u.email,
+            u.profile_picture,
+            (SELECT COALESCE(SUM(amount),0) FROM expenses e2 WHERE e2.group_id = gm.group_id AND e2.paid_by = u.id) as total_paid,
+            (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = gm.group_id AND es2.user_id = u.id) as total_owed
+          FROM users u
+          INNER JOIN group_members gm ON u.id = gm.user_id
+          WHERE gm.group_id = ?
+          GROUP BY u.id, u.name, u.email, u.profile_picture, gm.group_id
+        ");
+        $stmt->execute([$groupId]);
+        $balances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $result = array_map(function ($b) {
       $totalPaid = floatval($b['total_paid']);
