@@ -13,9 +13,14 @@ function handleExpenseRoutes($uri, $method)
     $groupId = $parts[1];
     createExpense($groupId);
   } elseif (count($parts) >= 2 && $method === 'GET') {
-    // GET /expenses/{groupId}
-    $groupId = $parts[1];
-    getGroupExpenses($groupId);
+    // GET /expenses/{groupId} OR GET /expenses/expense/{expenseId}
+    if ($parts[1] === 'expense' && isset($parts[2])) {
+      $expenseId = $parts[2];
+      getExpense($expenseId);
+    } else {
+      $groupId = $parts[1];
+      getGroupExpenses($groupId);
+    }
   } elseif (count($parts) >= 2 && $method === 'PUT') {
     // PUT /expenses/{expenseId}
     $expenseId = $parts[1];
@@ -424,5 +429,34 @@ function deleteExpense($expenseId)
 
   } catch (Exception $e) {
     Response::error('Failed to delete expense: ' . $e->getMessage(), 500);
+  }
+}
+
+function getExpense($expenseId)
+{
+  try {
+    $db = getDB()->getConnection();
+
+    $stmt = $db->prepare('SELECT e.*, u.name as paid_by_name, u.profile_picture as paid_by_picture FROM expenses e INNER JOIN users u ON e.paid_by = u.id WHERE e.id = ?');
+    $stmt->execute([$expenseId]);
+    $expense = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$expense) {
+      Response::error('Expense not found', 404);
+    }
+
+    $stmt = $db->prepare('SELECT es.*, u.name as user_name FROM expense_splits es INNER JOIN users u ON es.user_id = u.id WHERE es.expense_id = ?');
+    $stmt->execute([$expenseId]);
+    $expense['splits'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Normalize numeric fields
+    $expense['id'] = (int) $expense['id'];
+    $expense['group_id'] = (int) $expense['group_id'];
+    $expense['paid_by'] = (int) $expense['paid_by'];
+    $expense['amount'] = floatval($expense['amount']);
+
+    Response::success($expense);
+  } catch (Exception $e) {
+    Response::error('Failed to fetch expense: ' . $e->getMessage(), 500);
   }
 }
