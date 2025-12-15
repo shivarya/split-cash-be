@@ -112,11 +112,46 @@ function getGroups()
   try {
     $db = getDB();
 
-    // First, auto-accept any pending invitations for user's email
+    // First, check if user logged in with an email that has pending invitations
     $userEmail = $db->fetchOne('SELECT email FROM users WHERE id = ?', [$tokenData['userId']]);
     if ($userEmail && $userEmail['email']) {
+      // Find placeholder accounts with same email
+      $placeholders = $db->fetchAll(
+        'SELECT id FROM users WHERE email = ? AND google_id IS NULL AND id != ?',
+        [$userEmail['email'], $tokenData['userId']]
+      );
+
+      foreach ($placeholders as $placeholder) {
+        $placeholderId = $placeholder['id'];
+
+        // Update all group memberships from placeholder to real user
+        $db->execute(
+          'UPDATE group_members SET user_id = ?, status = \"active\" WHERE user_id = ? AND status = \"pending\"',
+          [$tokenData['userId'], $placeholderId]
+        );
+
+        // Update expense references (paid_by)
+        $db->execute(
+          'UPDATE expenses SET paid_by = ? WHERE paid_by = ?',
+          [$tokenData['userId'], $placeholderId]
+        );
+
+        // Update expense splits
+        $db->execute(
+          'UPDATE expense_splits SET user_id = ? WHERE user_id = ?',
+          [$tokenData['userId'], $placeholderId]
+        );
+
+        // Delete pending invitations for this email
+        $db->execute('DELETE FROM invitations WHERE user_id = ?', [$placeholderId]);
+
+        // Delete the placeholder user
+        $db->execute('DELETE FROM users WHERE id = ?', [$placeholderId]);
+      }
+
+      // Also auto-accept any old-style invitations (without user_id)
       $pendingInvitations = $db->fetchAll(
-        'SELECT id, group_id FROM invitations WHERE email = ? AND expires_at > NOW()',
+        'SELECT id, group_id FROM invitations WHERE email = ? AND expires_at > NOW() AND user_id IS NULL',
         [$userEmail['email']]
       );
 
@@ -195,12 +230,13 @@ function getGroupDetails($groupId)
     if (!$group)
       Response::error('Group not found', 404);
 
-    // Get members with roles (only active members)
+    // Get members with roles (active and pending members)
     $members = $db->fetchAll(
-      'SELECT u.id, u.name, u.email, u.profile_picture, gm.role
+      'SELECT u.id, u.name, u.email, u.profile_picture, gm.role, gm.status
              FROM users u
              INNER JOIN group_members gm ON u.id = gm.user_id
-             WHERE gm.group_id = ? AND gm.status = "active"',
+             WHERE gm.group_id = ? AND gm.status IN ("active", "pending")
+             ORDER BY gm.status ASC, u.name ASC',
       [$groupId]
     );
 
@@ -218,7 +254,8 @@ function getGroupDetails($groupId)
           'name' => $m['name'],
           'email' => $m['email'],
           'profile_picture' => $m['profile_picture'],
-          'role' => $m['role']
+          'role' => $m['role'],
+          'status' => $m['status']
         ];
       }, $members)
     ]);
@@ -654,19 +691,37 @@ function addMemberByEmail($groupId)
 
       Response::success(null, 'Member added to group successfully');
     } else {
-      // User doesn't exist - create invitation
+      // User doesn't exist - create placeholder user and add to group
       $token = bin2hex(random_bytes(32));
+
+      // Create placeholder user with email as name
+      $placeholderUserId = $db->insert(
+        'INSERT INTO users (email, name, google_id, created_at, updated_at) VALUES (?, ?, NULL, NOW(), NOW())',
+        [$email, $email]
+      );
+
+      // Add placeholder user to group with 'pending' status (we'll need to add this status)
+      $db->insert(
+        'INSERT INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, "pending", NOW())',
+        [$groupId, $placeholderUserId, 'member']
+      );
 
       // Store invitation
       $db->insert(
-        'INSERT INTO invitations (group_id, email, invited_by, token, expires_at, created_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())',
-        [$groupId, $email, $tokenData['userId'], $token]
+        'INSERT INTO invitations (group_id, email, invited_by, token, expires_at, created_at, user_id) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW(), ?)',
+        [$groupId, $email, $tokenData['userId'], $token, $placeholderUserId]
+      );
+
+      // Log activity
+      $db->insert(
+        'INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?, ?)',
+        [$groupId, $tokenData['userId'], 'invite_member', 'user', $placeholderUserId, "Invited {$email} to group"]
       );
 
       // Send invitation email
       sendInvitationEmail($email, $group['name'], $token);
 
-      Response::success(null, 'User not registered. Invitation sent successfully');
+      Response::success(null, 'User not registered. Invitation sent and member added to group');
     }
 
   } catch (Exception $e) {

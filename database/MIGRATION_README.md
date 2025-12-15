@@ -1,11 +1,56 @@
-# Group Member Status Migration
+# Database Migrations
 
-## What's New
+## Migration: Pending Member Status (migration_add_pending_status.sql)
+
+### What's New
+- Members invited by email now appear in the group immediately as "Pending"
+- Pending members show their email address as their name
+- When they log in with Google, their name automatically updates
+- All expense history is preserved and linked to their real account
+
+### Database Changes
+1. Added `pending` status to `group_members` table
+2. Added `user_id` column to `invitations` table to link placeholder users
+
+### Required Migration
+Run this in your database:
+
+```sql
+source database/migration_add_pending_status.sql
+```
+
+Or manually:
+
+```sql
+ALTER TABLE group_members 
+MODIFY COLUMN status ENUM('active', 'left', 'pending') DEFAULT 'active';
+
+ALTER TABLE invitations 
+ADD COLUMN user_id INT NULL AFTER invited_by,
+ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+```
+
+### How It Works
+1. When inviting a member by email:
+   - Creates a placeholder user with email as name
+   - Adds them to group with 'pending' status
+   - Sends invitation email
+2. When the invited user logs in:
+   - System finds placeholder account with matching email
+   - Transfers all memberships, expenses, and splits to real account
+   - Deletes placeholder account
+   - Updates status to 'active'
+
+---
+
+## Migration: Group Member Status (migration_add_status.sql)
+
+### What's New
 - Groups you leave will now remain visible in your Groups tab
 - You can rejoin groups you've previously left
 - Left groups are shown with a greyed-out appearance and a "You left • Tap to rejoin" badge
 
-## Database Changes
+### Database Changes
 This update adds a `status` field to the `group_members` table to track whether a member is `active` or `left`.
 
 ### Required Migration
