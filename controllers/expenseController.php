@@ -296,7 +296,84 @@ function updateExpense($expenseId)
     $stmt = $db->prepare('UPDATE expenses SET ' . implode(', ', $updates) . ' WHERE id = ?');
     $stmt->execute($values);
 
-    Response::success(['message' => 'Expense updated successfully']);
+    // If amount changed, recalculate splits to keep distribution consistent
+    if (isset($input['amount'])) {
+      $newAmount = floatval($input['amount']);
+      $oldAmount = floatval($expense['amount']);
+
+      // Fetch current splits
+      $stmt = $db->prepare('SELECT * FROM expense_splits WHERE expense_id = ? ORDER BY id ASC');
+      $stmt->execute([$expenseId]);
+      $splits = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+      if (count($splits) > 0) {
+        $splitType = $expense['split_type'];
+
+        // Helper to persist updates and ensure sums match
+        $totalAssigned = 0.0;
+        $updated = [];
+
+        if ($splitType === 'equal') {
+          $count = count($splits);
+          $share = round($newAmount / $count, 2);
+          foreach ($splits as $i => $s) {
+            $amt = $share;
+            // Last split takes the remainder to avoid rounding issues
+            if ($i === $count - 1) {
+              $amt = round($newAmount - $totalAssigned, 2);
+            }
+            $totalAssigned += $amt;
+            $updated[] = ['id' => $s['id'], 'amount' => $amt];
+          }
+        } elseif ($splitType === 'percentage') {
+          foreach ($splits as $i => $s) {
+            $pct = isset($s['percentage']) ? floatval($s['percentage']) : 0.0;
+            $amt = round($newAmount * ($pct / 100.0), 2);
+            // Last split adjust for rounding
+            if ($i === count($splits) - 1) {
+              $amt = round($newAmount - $totalAssigned, 2);
+            }
+            $totalAssigned += $amt;
+            $updated[] = ['id' => $s['id'], 'amount' => $amt];
+          }
+        } else { // unequal
+          // If old amount is zero, distribute equally to avoid division by zero
+          $factor = $oldAmount > 0 ? ($newAmount / $oldAmount) : (1.0 / count($splits));
+          foreach ($splits as $i => $s) {
+            $amt = round(floatval($s['amount']) * $factor, 2);
+            if ($i === count($splits) - 1) {
+              $amt = round($newAmount - $totalAssigned, 2);
+            }
+            $totalAssigned += $amt;
+            $updated[] = ['id' => $s['id'], 'amount' => $amt];
+          }
+        }
+
+        // Persist updated split amounts
+        $updStmt = $db->prepare('UPDATE expense_splits SET amount = ? WHERE id = ?');
+        foreach ($updated as $u) {
+          $updStmt->execute([$u['amount'], $u['id']]);
+        }
+      }
+    }
+
+    // Return the updated expense with splits so clients can refresh UI
+    $stmt = $db->prepare('SELECT e.*, u.name as paid_by_name, u.profile_picture as paid_by_picture FROM expenses e INNER JOIN users u ON e.paid_by = u.id WHERE e.id = ?');
+    $stmt->execute([$expenseId]);
+    $updatedExpense = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // Fetch splits
+    $stmt = $db->prepare('SELECT es.*, u.name as user_name FROM expense_splits es INNER JOIN users u ON es.user_id = u.id WHERE es.expense_id = ?');
+    $stmt->execute([$expenseId]);
+    $updatedExpense['splits'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Normalize numeric fields
+    $updatedExpense['id'] = (int) $updatedExpense['id'];
+    $updatedExpense['group_id'] = (int) $updatedExpense['group_id'];
+    $updatedExpense['paid_by'] = (int) $updatedExpense['paid_by'];
+    $updatedExpense['amount'] = floatval($updatedExpense['amount']);
+
+    Response::success(['message' => 'Expense updated successfully', 'expense' => $updatedExpense]);
 
   } catch (Exception $e) {
     Response::error('Failed to update expense: ' . $e->getMessage(), 500);
