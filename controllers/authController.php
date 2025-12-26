@@ -101,6 +101,13 @@ function googleAuth()
     ]);
 
   } catch (Exception $e) {
+    // Additional debug logging
+    error_log('googleAuth exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    $dir = __DIR__ . '/../debug';
+    if (!is_dir($dir)) {
+      @mkdir($dir, 0755, true);
+    }
+    @file_put_contents($dir . '/debug.log', '[' . date('c') . '] googleAuth exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() . PHP_EOL, FILE_APPEND | LOCK_EX);
     Response::error('Authentication failed: ' . $e->getMessage(), 500);
   }
 }

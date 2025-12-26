@@ -106,6 +106,13 @@ try {
     exit;
   }
 
+  // Debug routes (temporary)
+  if (strpos($uri, '/debug') === 0) {
+    require_once __DIR__ . '/controllers/debugController.php';
+    handleDebugRoutes($uri, $requestMethod);
+    exit;
+  }
+
   // Invitation token routes (public metadata, protected acceptance)
   if (strpos($uri, '/invitations') === 0) {
     require_once __DIR__ . '/controllers/groupController.php';
