@@ -1,0 +1,136 @@
+[02-Dec-2025 12:05:32 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:05:32 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:15:49 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:15:49 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:15:55 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:15:55 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:17:35 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:17:35 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:18:47 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:18:47 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:18:48 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:18:48 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:21:27 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:21:27 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:21:30 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:21:30 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:21:37 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:21:37 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:22:09 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:22:09 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:22:12 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:22:12 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:24:05 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:24:05 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:24:06 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:24:06 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(16): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:27:01 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:27:01 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(21): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:42 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:42 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(21): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:43 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:43 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(21): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:43 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:43 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(21): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:44 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:44 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(21): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:45 Asia/Kolkata] PHP Warning:  require_once(/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[02-Dec-2025 12:28:45 Asia/Kolkata] PHP Fatal error:  Uncaught Error: Failed opening required '/home/hm5pno1wummg/public_html/split_cash/utils/../vendor/autoload.php' (include_path='.:/opt/alt/php84/usr/share/pear:/opt/alt/php84/usr/share/php:/usr/share/pear:/usr/share/php') in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php:2
+Stack trace:
+#0 /home/hm5pno1wummg/public_html/split_cash/index.php(21): require_once()
+#1 {main}
+  thrown in /home/hm5pno1wummg/public_html/split_cash/utils/jwt.php on line 2
+[04-Dec-2025 20:10:47 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[04-Dec-2025 20:10:47 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[04-Dec-2025 20:10:47 Asia/Kolkata] Google Auth - Payload: {"iss":"https:\/\/accounts.google.com","azp":"961328387938-3fj0cdmbpmdb25vdp9ccg5lgsshef4em.apps.googleusercontent.com","aud":"961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com","sub":"111471823717245511288","email":"ashcoolshivam@gmail.com","email_verified":true,"name":"Ashish Tripathi (Shivam)","picture":"https:\/\/lh3.googleusercontent.com\/a\/ACg8ocKhwnkYFo1jrJn8QY4JAt0LR5SRBK_8B8Z1pbjLDGReGR6vQND4rw=s96-c","given_name":"Ashish","family_name":"Tripathi","iat":1764859245,"exp":1764862845}
+[05-Dec-2025 18:48:41 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[05-Dec-2025 18:48:41 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[05-Dec-2025 18:48:41 Asia/Kolkata] Google Auth - Payload: {"iss":"https:\/\/accounts.google.com","azp":"961328387938-3fj0cdmbpmdb25vdp9ccg5lgsshef4em.apps.googleusercontent.com","aud":"961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com","sub":"111471823717245511288","email":"ashcoolshivam@gmail.com","email_verified":true,"name":"Ashish Tripathi (Shivam)","picture":"https:\/\/lh3.googleusercontent.com\/a\/ACg8ocKhwnkYFo1jrJn8QY4JAt0LR5SRBK_8B8Z1pbjLDGReGR6vQND4rw=s96-c","given_name":"Ashish","family_name":"Tripathi","iat":1764940720,"exp":1764944320}
+[06-Dec-2025 13:44:34 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[06-Dec-2025 13:44:34 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[06-Dec-2025 13:44:34 Asia/Kolkata] Google Auth - Payload: null
+[09-Dec-2025 13:00:45 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[09-Dec-2025 13:00:45 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[09-Dec-2025 13:00:45 Asia/Kolkata] Google Auth - Payload: {"iss":"https:\/\/accounts.google.com","azp":"961328387938-3fj0cdmbpmdb25vdp9ccg5lgsshef4em.apps.googleusercontent.com","aud":"961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com","sub":"111471823717245511288","email":"ashcoolshivam@gmail.com","email_verified":true,"name":"Ashish Tripathi (Shivam)","picture":"https:\/\/lh3.googleusercontent.com\/a\/ACg8ocKhwnkYFo1jrJn8QY4JAt0LR5SRBK_8B8Z1pbjLDGReGR6vQND4rw=s96-c","given_name":"Ashish","family_name":"Tripathi","iat":1765265443,"exp":1765269043}
+[09-Dec-2025 14:00:17 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[09-Dec-2025 14:00:17 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[09-Dec-2025 14:00:17 Asia/Kolkata] Google Auth - Payload: {"iss":"https:\/\/accounts.google.com","azp":"961328387938-3fj0cdmbpmdb25vdp9ccg5lgsshef4em.apps.googleusercontent.com","aud":"961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com","sub":"111471823717245511288","email":"ashcoolshivam@gmail.com","email_verified":true,"name":"Ashish Tripathi (Shivam)","picture":"https:\/\/lh3.googleusercontent.com\/a\/ACg8ocKhwnkYFo1jrJn8QY4JAt0LR5SRBK_8B8Z1pbjLDGReGR6vQND4rw=s96-c","given_name":"Ashish","family_name":"Tripathi","iat":1765265443,"exp":1765269043}
+[09-Dec-2025 15:30:25 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[09-Dec-2025 15:30:25 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[09-Dec-2025 15:30:25 Asia/Kolkata] Google Auth - Payload: {"iss":"https:\/\/accounts.google.com","azp":"961328387938-3fj0cdmbpmdb25vdp9ccg5lgsshef4em.apps.googleusercontent.com","aud":"961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com","sub":"111471823717245511288","email":"ashcoolshivam@gmail.com","email_verified":true,"name":"Ashish Tripathi (Shivam)","picture":"https:\/\/lh3.googleusercontent.com\/a\/ACg8ocKhwnkYFo1jrJn8QY4JAt0LR5SRBK_8B8Z1pbjLDGReGR6vQND4rw=s96-c","given_name":"Ashish","family_name":"Tripathi","iat":1765274424,"exp":1765278024}
+[09-Dec-2025 15:48:05 Asia/Kolkata] Balance fetch error: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'shivarya_splitcash.groups' doesn't exist
+[09-Dec-2025 16:33:39 Asia/Kolkata] Google Auth - Token received: Yes (length: 1130)
+[09-Dec-2025 16:33:39 Asia/Kolkata] Google Auth - Using Client ID: 961328387938-mrob7sr...
+[09-Dec-2025 16:33:40 Asia/Kolkata] Google Auth - Payload: {"iss":"https:\/\/accounts.google.com","azp":"961328387938-3fj0cdmbpmdb25vdp9ccg5lgsshef4em.apps.googleusercontent.com","aud":"961328387938-mrob7sroupab8kk14kk1g0io1pa2b5ri.apps.googleusercontent.com","sub":"111471823717245511288","email":"ashcoolshivam@gmail.com","email_verified":true,"name":"Ashish Tripathi (Shivam)","picture":"https:\/\/lh3.googleusercontent.com\/a\/ACg8ocKhwnkYFo1jrJn8QY4JAt0LR5SRBK_8B8Z1pbjLDGReGR6vQND4rw=s96-c","given_name":"Ashish","family_name":"Tripathi","iat":1765278218,"exp":1765281818}
