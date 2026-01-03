@@ -69,17 +69,21 @@ function getMyBalances($userId)
     foreach ($groups as $group) {
       $groupId = $group['group_id'];
 
-      // Get user's balance in this group using subqueries to avoid duplicate joins
+      // Get user's balance in this group using subqueries to avoid duplicate joins (including settlements)
       $stmt = $db->prepare("SELECT
               (SELECT COALESCE(SUM(amount),0) FROM expenses e2 WHERE e2.group_id = ? AND e2.paid_by = ?) as total_paid,
-              (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = ? AND es2.user_id = ?) as total_owed
+              (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = ? AND es2.user_id = ?) as total_owed,
+              (SELECT COALESCE(SUM(amount),0) FROM settlements WHERE group_id = ? AND to_user_id = ?) as settlements_received,
+              (SELECT COALESCE(SUM(amount),0) FROM settlements WHERE group_id = ? AND from_user_id = ?) as settlements_paid
             ");
-      $stmt->execute([$groupId, $userId, $groupId, $userId]);
+      $stmt->execute([$groupId, $userId, $groupId, $userId, $groupId, $userId, $groupId, $userId]);
       $balance = $stmt->fetch(PDO::FETCH_ASSOC);
 
       $totalPaid = floatval($balance['total_paid']);
       $totalOwed = floatval($balance['total_owed']);
-      $netBalance = $totalPaid - $totalOwed;
+      $settlementsReceived = floatval($balance['settlements_received']);
+      $settlementsPaid = floatval($balance['settlements_paid']);
+      $netBalance = $totalPaid - $totalOwed + $settlementsReceived - $settlementsPaid;
 
       $result[] = [
         'group_id' => (int) $groupId,
@@ -119,7 +123,9 @@ function getGroupBalances($groupId, $userId)
             u.email,
             u.profile_picture,
             (SELECT COALESCE(SUM(amount),0) FROM expenses e2 WHERE e2.group_id = gm.group_id AND e2.paid_by = u.id) as total_paid,
-            (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = gm.group_id AND es2.user_id = u.id) as total_owed
+            (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = gm.group_id AND es2.user_id = u.id) as total_owed,
+            (SELECT COALESCE(SUM(amount),0) FROM settlements s WHERE s.group_id = gm.group_id AND s.to_user_id = u.id) as settlements_received,
+            (SELECT COALESCE(SUM(amount),0) FROM settlements s WHERE s.group_id = gm.group_id AND s.from_user_id = u.id) as settlements_paid
           FROM users u
           INNER JOIN group_members gm ON u.id = gm.user_id
           WHERE gm.group_id = ?
@@ -131,6 +137,9 @@ function getGroupBalances($groupId, $userId)
     $result = array_map(function ($b) {
       $totalPaid = floatval($b['total_paid']);
       $totalOwed = floatval($b['total_owed']);
+      $settlementsReceived = floatval($b['settlements_received']);
+      $settlementsPaid = floatval($b['settlements_paid']);
+
       return [
         'user_id' => (int) $b['id'],
         'name' => $b['name'],
@@ -138,7 +147,7 @@ function getGroupBalances($groupId, $userId)
         'profile_picture' => $b['profile_picture'],
         'total_paid' => $totalPaid,
         'total_owed' => $totalOwed,
-        'balance' => $totalPaid - $totalOwed
+        'balance' => $totalPaid - $totalOwed + $settlementsReceived - $settlementsPaid
       ];
     }, $balances);
 
@@ -160,17 +169,21 @@ function getSettlementSuggestions($groupId, $userId)
       Response::error('You are not a member of this group', 403);
     }
 
-    // Get all members' balances
+    // Get all members' balances (including settlements)
     $stmt = $db->prepare("
       SELECT 
         u.id,
         u.name,
-        COALESCE(SUM(CASE WHEN e.paid_by = u.id THEN e.amount ELSE 0 END), 0) -
-        COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0) as balance
+        (COALESCE(SUM(CASE WHEN e.paid_by = u.id THEN e.amount ELSE 0 END), 0) -
+         COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0) +
+         COALESCE(SUM(CASE WHEN s_received.to_user_id = u.id THEN s_received.amount ELSE 0 END), 0) -
+         COALESCE(SUM(CASE WHEN s_paid.from_user_id = u.id THEN s_paid.amount ELSE 0 END), 0)) as balance
       FROM users u
       INNER JOIN group_members gm ON u.id = gm.user_id
       LEFT JOIN expenses e ON e.group_id = gm.group_id
       LEFT JOIN expense_splits es ON es.expense_id = e.id AND es.user_id = u.id
+      LEFT JOIN settlements s_received ON s_received.group_id = gm.group_id AND s_received.to_user_id = u.id
+      LEFT JOIN settlements s_paid ON s_paid.group_id = gm.group_id AND s_paid.from_user_id = u.id
       WHERE gm.group_id = ?
       GROUP BY u.id, u.name
       HAVING balance != 0
