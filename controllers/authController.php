@@ -3,6 +3,17 @@ require_once __DIR__ . '/../vendor/autoload.php';
 
 use Google\Client;
 
+// Helper to write auth-specific debug logs
+function authDebugLog($msg)
+{
+  $dir = __DIR__ . '/../debug';
+  if (!is_dir($dir)) {
+    @mkdir($dir, 0755, true);
+  }
+  $file = $dir . '/auth_debug.log';
+  @file_put_contents($file, '[' . date('c') . '] ' . $msg . PHP_EOL, FILE_APPEND | LOCK_EX);
+}
+
 function handleAuthRoutes($uri, $method)
 {
   if ($uri === '/auth/google' && $method === 'POST') {
@@ -18,13 +29,19 @@ function handleAuthRoutes($uri, $method)
 
 function googleAuth()
 {
+  $start = microtime(true);
   $input = getJsonInput();
   $idToken = $input['idToken'] ?? null;
+  $remote = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 
-  // Debug: Log received data
+  // Auth debug start
+  authDebugLog('START googleAuth from ' . $remote . ' tokenPresent:' . ($idToken ? '1' : '0') . ' tokenLen:' . ($idToken ? strlen($idToken) : 0));
+
+  // Debug: Log received data (non-sensitive)
   error_log("Google Auth - Token received: " . ($idToken ? "Yes (length: " . strlen($idToken) . ")" : "No"));
 
   if (!$idToken) {
+    authDebugLog('MISSING idToken - returning 400');
     Response::error('ID token is required', 400);
     return;
   }
@@ -34,12 +51,20 @@ function googleAuth()
     error_log("Google Auth - Using Client ID: " . substr(GOOGLE_CLIENT_ID, 0, 20) . "...");
 
     // Verify Google ID token
-    $client = new Client(['client_id' => GOOGLE_CLIENT_ID]);
-    $payload = $client->verifyIdToken($idToken);
+    try {
+      $client = new Client(['client_id' => GOOGLE_CLIENT_ID]);
+      $payload = $client->verifyIdToken($idToken);
+      authDebugLog('verifyIdToken returned ' . ($payload ? 'payload' : 'null'));
+    } catch (Exception $e) {
+      authDebugLog('verifyIdToken exception: ' . $e->getMessage());
+      throw $e; // will be caught by outer catch
+    }
 
     error_log("Google Auth - Payload: " . ($payload ? json_encode($payload) : "null"));
+    authDebugLog('Payload keys: ' . ($payload ? implode(',', array_keys($payload)) : 'null'));
 
     if (!$payload) {
+      authDebugLog('Invalid ID token - verification returned null');
       Response::error('Invalid ID token - verification returned null', 401);
       return;
     }
@@ -49,46 +74,83 @@ function googleAuth()
     $name = $payload['name'] ?? '';
     $picture = $payload['picture'] ?? '';
 
-    $db = getDB();
+    // Test DB connection and log
+    try {
+      $db = getDB();
+      $db->query('SELECT 1');
+      authDebugLog('DB connection OK');
+    } catch (Exception $e) {
+      authDebugLog('DB connection error: ' . $e->getMessage());
+      throw $e; // propagate to outer catch to be logged
+    }
 
     // Check if user exists
-    $user = $db->fetchOne(
-      'SELECT * FROM users WHERE google_id = ? OR email = ?',
-      [$googleId, $email]
-    );
+    try {
+      $user = $db->fetchOne(
+        'SELECT * FROM users WHERE google_id = ? OR email = ?',
+        [$googleId, $email]
+      );
+      authDebugLog('User lookup completed, found: ' . ($user ? 'yes id=' . $user['id'] : 'no'));
+    } catch (Exception $e) {
+      authDebugLog('User lookup error: ' . $e->getMessage());
+      throw $e;
+    }
 
     $isNewUser = false;
 
     if (!$user) {
       // Create new user
-      $userId = $db->insert(
-        'INSERT INTO users (google_id, email, name, profile_picture, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())',
-        [$googleId, $email, $name, $picture]
-      );
-
-      $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$userId]);
-      $isNewUser = true;
+      try {
+        $userId = $db->insert(
+          'INSERT INTO users (google_id, email, name, profile_picture, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())',
+          [$googleId, $email, $name, $picture]
+        );
+        authDebugLog('Inserted new user id=' . $userId);
+        $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$userId]);
+        $isNewUser = true;
+      } catch (Exception $e) {
+        authDebugLog('Insert user error: ' . $e->getMessage());
+        throw $e;
+      }
     } else {
       // Update user info
-      $db->execute(
-        'UPDATE users SET google_id = ?, name = ?, profile_picture = ?, updated_at = NOW() WHERE id = ?',
-        [$googleId, $name, $picture, $user['id']]
-      );
-
-      // Fetch updated user
-      $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$user['id']]);
+      try {
+        $db->execute(
+          'UPDATE users SET google_id = ?, name = ?, profile_picture = ?, updated_at = NOW() WHERE id = ?',
+          [$googleId, $name, $picture, $user['id']]
+        );
+        authDebugLog('Updated user id=' . $user['id']);
+        // Fetch updated user
+        $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$user['id']]);
+      } catch (Exception $e) {
+        authDebugLog('Update user error: ' . $e->getMessage());
+        throw $e;
+      }
     }
 
     // Auto-accept any pending invitations for this email (ensures newly invited users see the group immediately)
-    acceptPendingInvitations($db, (int) $user['id'], $user['email']);
+    try {
+      acceptPendingInvitations($db, (int) $user['id'], $user['email']);
+      authDebugLog('Accepted invitations for user id=' . $user['id']);
+    } catch (Exception $e) {
+      authDebugLog('Error accepting invitations: ' . $e->getMessage());
+    }
 
     // Generate JWT token
     $token = JWTHandler::generate($user['id'], $user['email']);
 
     // Send welcome email for new users
     if ($isNewUser) {
-      sendWelcomeEmail($user['email'], $user['name']);
+      try {
+        sendWelcomeEmail($user['email'], $user['name']);
+        authDebugLog('Sent welcome email to ' . $user['email']);
+      } catch (Exception $e) {
+        authDebugLog('Error sending welcome email: ' . $e->getMessage());
+      }
     }
+
+    $elapsed = microtime(true) - $start;
+    authDebugLog('END googleAuth success userId=' . $user['id'] . ' elapsed=' . round($elapsed, 3) . 's peakMem=' . memory_get_peak_usage(true));
 
     Response::success([
       'user' => [
@@ -101,6 +163,14 @@ function googleAuth()
     ]);
 
   } catch (Exception $e) {
+    // Additional debug logging
+    error_log('googleAuth exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    $dir = __DIR__ . '/../debug';
+    if (!is_dir($dir)) {
+      @mkdir($dir, 0755, true);
+    }
+    @file_put_contents($dir . '/debug.log', '[' . date('c') . '] googleAuth exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() . PHP_EOL, FILE_APPEND | LOCK_EX);
+    authDebugLog('googleAuth exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     Response::error('Authentication failed: ' . $e->getMessage(), 500);
   }
 }
