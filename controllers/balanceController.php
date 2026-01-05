@@ -32,6 +32,11 @@ function handleBalanceRoutes($uri, $method)
     // POST /balances/{groupId}/settlements
     $groupId = $parts[1];
     recordSettlement($groupId, $userId);
+  } elseif ($method === 'DELETE' && count($parts) == 4 && $parts[2] === 'settlements' && is_numeric($parts[3])) {
+    // DELETE /balances/{groupId}/settlements/{settlementId}
+    $groupId = $parts[1];
+    $settlementId = $parts[3];
+    deleteSettlement($groupId, $userId, $settlementId);
   } elseif ($method === 'GET' && count($parts) == 3 && $parts[2] === 'activity') {
     // GET /balances/{groupId}/activity
     $groupId = $parts[1];
@@ -344,6 +349,60 @@ function recordSettlement($groupId, $userId)
 
   } catch (Exception $e) {
     Response::error('Failed to record settlement: ' . $e->getMessage(), 500);
+  }
+}
+
+function deleteSettlement($groupId, $userId, $settlementId)
+{
+  try {
+    $db = getDB()->getConnection();
+
+    // Check if user is member (and active)
+    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
+    $stmt->execute([$groupId, $userId]);
+    $member = $stmt->fetch();
+    if (!$member || $member['status'] === 'left') {
+      Response::error('You are not a member of this group', 403);
+    }
+
+    // Get settlement details before deleting
+    $stmt = $db->prepare('SELECT * FROM settlements WHERE id = ? AND group_id = ?');
+    $stmt->execute([$settlementId, $groupId]);
+    $settlement = $stmt->fetch();
+
+    if (!$settlement) {
+      Response::error('Settlement not found', 404);
+    }
+
+    // Only the person who recorded the settlement can delete it
+    if ((int) $settlement['from_user_id'] !== (int) $userId) {
+      Response::error('You can only delete settlements you recorded', 403);
+    }
+
+    // Delete the settlement
+    $stmt = $db->prepare('DELETE FROM settlements WHERE id = ? AND group_id = ?');
+    $stmt->execute([$settlementId, $groupId]);
+
+    // Log activity
+    $stmt = $db->prepare('
+      INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description)
+      VALUES (?, ?, ?, ?, ?, ?)
+    ');
+    $stmt->execute([
+      $groupId,
+      $userId,
+      'delete_settlement',
+      'settlement',
+      $settlementId,
+      "Deleted settlement of ₹" . $settlement['amount']
+    ]);
+
+    Response::success([
+      'message' => 'Settlement deleted successfully'
+    ], 'Settlement deleted successfully');
+
+  } catch (Exception $e) {
+    Response::error('Failed to delete settlement: ' . $e->getMessage(), 500);
   }
 }
 
