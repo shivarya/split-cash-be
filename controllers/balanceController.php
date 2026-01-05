@@ -88,7 +88,7 @@ function getMyBalances($userId)
       $totalOwed = floatval($balance['total_owed']);
       $settlementsReceived = floatval($balance['settlements_received']);
       $settlementsPaid = floatval($balance['settlements_paid']);
-      $netBalance = $totalPaid - $totalOwed + $settlementsReceived + $settlementsPaid;
+      $netBalance = $totalPaid - $totalOwed - $settlementsReceived + $settlementsPaid;
 
       $result[] = [
         'group_id' => (int) $groupId,
@@ -152,7 +152,7 @@ function getGroupBalances($groupId, $userId)
         'profile_picture' => $b['profile_picture'],
         'total_paid' => $totalPaid,
         'total_owed' => $totalOwed,
-        'balance' => $totalPaid - $totalOwed + $settlementsReceived + $settlementsPaid
+        'balance' => $totalPaid - $totalOwed - $settlementsReceived + $settlementsPaid
       ];
     }, $balances);
 
@@ -180,7 +180,7 @@ function getSettlementSuggestions($groupId, $userId)
         u.id,
         u.name,
         (COALESCE(SUM(CASE WHEN e.paid_by = u.id THEN e.amount ELSE 0 END), 0) -
-         COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0) +
+         COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0) -
          COALESCE(SUM(CASE WHEN s_received.to_user_id = u.id THEN s_received.amount ELSE 0 END), 0) +
          COALESCE(SUM(CASE WHEN s_paid.from_user_id = u.id THEN s_paid.amount ELSE 0 END), 0)) as balance
       FROM users u
