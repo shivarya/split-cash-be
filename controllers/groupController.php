@@ -798,7 +798,7 @@ function sendInvitationEmail($toEmail, $groupName, $token)
   $success = @mail($toEmail, $subject, $message, implode("\r\n", $headers));
 
   if (!$success) {
-    error_log('Failed to send invitation email to ' . $toEmail . ' token ' . $token);
+    error_log('Failed to send an invitation email for group invite');
   }
 }
 

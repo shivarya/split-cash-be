@@ -4,8 +4,12 @@ require_once __DIR__ . '/../vendor/autoload.php';
 use Google\Client;
 
 // Helper to write auth-specific debug logs
+/** Step-by-step sign-in trace (IPs, user ids) in debug/auth_debug.log — local development only. */
 function authDebugLog($msg)
 {
+  if (APP_ENV !== 'local') {
+    return;
+  }
   $dir = __DIR__ . '/../debug';
   if (!is_dir($dir)) {
     @mkdir($dir, 0755, true);
@@ -44,9 +48,6 @@ function googleAuth()
   // Auth debug start
   authDebugLog('START googleAuth from ' . $remote . ' tokenPresent:' . ($idToken ? '1' : '0') . ' tokenLen:' . ($idToken ? strlen($idToken) : 0));
 
-  // Debug: Log received data (non-sensitive)
-  error_log("Google Auth - Token received: " . ($idToken ? "Yes (length: " . strlen($idToken) . ")" : "No"));
-
   if (!$idToken) {
     authDebugLog('MISSING idToken - returning 400');
     Response::error('ID token is required', 400);
@@ -54,9 +55,6 @@ function googleAuth()
   }
 
   try {
-    // Debug: Log client ID being used
-    error_log("Google Auth - Using Client ID: " . substr(GOOGLE_CLIENT_ID, 0, 20) . "...");
-
     // Verify Google ID token
     try {
       $client = new Client(['client_id' => GOOGLE_CLIENT_ID]);
@@ -67,7 +65,6 @@ function googleAuth()
       throw $e; // will be caught by outer catch
     }
 
-    error_log("Google Auth - Payload: " . ($payload ? json_encode($payload) : "null"));
     authDebugLog('Payload keys: ' . ($payload ? implode(',', array_keys($payload)) : 'null'));
 
     if (!$payload) {

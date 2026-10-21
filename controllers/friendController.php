@@ -135,7 +135,7 @@ function sendFriendInviteEmail(string $toEmail, string $fromName, string $token)
     . "If you did not expect this, you can ignore this email.";
   $headers = ['From: ' . EMAIL_FROM, 'Reply-To: ' . EMAIL_FROM_ADDRESS, 'Content-Type: text/plain; charset=UTF-8'];
   if (!@mail($toEmail, $subject, $message, implode("\r\n", $headers))) {
-    error_log('Failed to send friend invite email to ' . $toEmail);
+    error_log('Failed to send a friend invite email');
   }
 }
 
