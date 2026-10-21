@@ -1,9 +1,25 @@
 <?php
+require_once __DIR__ . '/../utils/auth.php';
+require_once __DIR__ . '/../utils/ledger.php';
+require_once __DIR__ . '/../utils/activity.php';
+require_once __DIR__ . '/../utils/push.php';
+require_once __DIR__ . '/receiptController.php';
+
+const GROUP_TYPES = ['trip', 'home', 'couple', 'other', 'general', 'food', 'entertainment', 'transport', 'shopping', 'utilities'];
+
 function handleGroupRoutes($uri, $method)
 {
   $parts = explode('/', trim($uri, '/'));
 
-  if (count($parts) == 1 && $method === 'POST') {
+  if (count($parts) == 2 && $parts[1] === 'accept-invitation' && $method === 'POST') {
+    acceptInvitation();
+  } elseif (count($parts) == 2 && is_numeric($parts[1]) && $method === 'PUT') {
+    updateGroup((int) $parts[1]);
+  } elseif (count($parts) == 3 && $parts[2] === 'invite-link' && in_array($method, ['POST', 'DELETE'], true)) {
+    groupInviteLink((int) $parts[1], $method === 'DELETE');
+  } elseif (count($parts) == 4 && $parts[2] === 'members' && is_numeric($parts[3]) && $method === 'DELETE') {
+    removeMember((int) $parts[1], (int) $parts[3]);
+  } elseif (count($parts) == 1 && $method === 'POST') {
     createGroup();
   } elseif (count($parts) == 1 && $method === 'GET') {
     getGroups();
@@ -28,8 +44,6 @@ function handleGroupRoutes($uri, $method)
   } elseif (count($parts) == 3 && $parts[2] === 'rejoin' && $method === 'POST') {
     $groupId = $parts[1];
     rejoinGroup($groupId);
-  } elseif (count($parts) == 2 && $parts[1] === 'accept-invitation' && $method === 'POST') {
-    acceptInvitation();
   } else {
     Response::error('Route not found', 404);
   }
@@ -168,16 +182,17 @@ function getGroups()
 
     // Now fetch all groups (including left groups)
     $conn = $db->getConnection();
+    // Hidden 1:1 groups (non-group expenses) are a native-app concept and never listed here
     $stmt = $conn->prepare('
-      SELECT 
-        g.id, g.name, g.description, g.category, g.image, g.created_at,
+      SELECT
+        g.id, g.name, g.description, g.category, g.image, g.created_at, g.simplify_debts,
         gm.role, gm.status,
         COUNT(DISTINCT CASE WHEN gm2.status = "active" THEN gm2.user_id END) as member_count
       FROM expense_groups g
       INNER JOIN group_members gm ON g.id = gm.group_id
       LEFT JOIN group_members gm2 ON g.id = gm2.group_id
-      WHERE gm.user_id = ?
-      GROUP BY g.id, g.name, g.description, g.category, g.image, g.created_at, gm.role, gm.status
+      WHERE gm.user_id = ? AND g.is_direct = 0 AND gm.status IN ("active", "left")
+      GROUP BY g.id, g.name, g.description, g.category, g.image, g.created_at, g.simplify_debts, gm.role, gm.status
       ORDER BY gm.status ASC, g.updated_at DESC
     ');
     $stmt->execute([$tokenData['userId']]);
@@ -193,6 +208,7 @@ function getGroups()
         'created_at' => $group['created_at'],
         'role' => $group['role'],
         'status' => $group['status'],
+        'simplify_debts' => (bool) $group['simplify_debts'],
         'member_count' => (int) $group['member_count']
       ];
     }, $groups);
@@ -240,13 +256,27 @@ function getGroupDetails($groupId)
       [$groupId]
     );
 
+    $viewerId = (int) $tokenData['userId'];
+    $name = $group['name'];
+    if ($group['is_direct']) {
+      foreach ($members as $m) {
+        if ((int) $m['id'] !== $viewerId) {
+          $name = $m['name'];
+        }
+      }
+    }
+
     Response::success([
       'id' => (int) $group['id'],
-      'name' => $group['name'],
+      'name' => $name,
       'description' => $group['description'],
       'category' => $group['category'],
       'image' => $group['image'],
       'created_by' => (int) $group['created_by'],
+      'created_at' => $group['created_at'],
+      'simplify_debts' => (bool) $group['simplify_debts'],
+      'is_direct' => (bool) $group['is_direct'],
+      'invite_url' => $group['invite_code'] ? inviteUrl($group['invite_code']) : null,
       'userRole' => $member['role'],
       'members' => array_map(function ($m) {
         return [
@@ -270,6 +300,8 @@ function getGroupMembers($groupId)
   $tokenData = JWTHandler::getUserFromToken();
   if (!$tokenData)
     Response::error('Unauthorized', 401);
+
+  requireActiveMember((int) $groupId, (int) $tokenData['userId']);
 
   try {
     $db = getDB();
@@ -324,10 +356,11 @@ function inviteMembers($groupId)
   if (empty($emails))
     Response::error('At least one valid email is required', 400);
 
+  requireActiveMember((int) $groupId, (int) $tokenData['userId']);
+
   try {
     $db = getDB();
 
-    // Check if user is group admin
     $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
     if (!$group)
       Response::error('Group not found', 404);
@@ -489,6 +522,11 @@ function deleteGroup($groupId)
     if ($member['role'] !== 'admin')
       Response::error('Only group admin can delete the group', 403);
 
+    // Receipt files aren't covered by the cascade
+    foreach ($db->fetchAll('SELECT receipt_url FROM expenses WHERE group_id = ? AND receipt_url IS NOT NULL', [$groupId]) as $r) {
+      removeReceiptFile($r['receipt_url']);
+    }
+
     // Delete group (cascade will delete all related records)
     $db->execute('DELETE FROM expense_groups WHERE id = ?', [$groupId]);
 
@@ -519,6 +557,10 @@ function leaveGroup($groupId)
 
     if ($member['status'] === 'left')
       Response::error('You have already left this group', 400);
+
+    $isDirect = $db->fetchOne('SELECT is_direct FROM expense_groups WHERE id = ?', [$groupId]);
+    if ($isDirect && $isDirect['is_direct'])
+      Response::error('Non-group expenses with a friend can\'t be left', 400);
 
     // Check if user is the only admin
     if ($member['role'] === 'admin') {
@@ -651,6 +693,8 @@ function addMemberByEmail($groupId)
     $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
     if (!$group)
       Response::error('Group not found', 404);
+    if ($group['is_direct'])
+      Response::error('Add people to a group instead', 400);
 
     // Check if user with this email exists
     $targetUser = $db->fetchOne('SELECT id FROM users WHERE email = ?', [$email]);
@@ -686,8 +730,16 @@ function addMemberByEmail($groupId)
       // Log activity
       $db->insert(
         'INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?, ?)',
-        [$groupId, $tokenData['userId'], 'add_member', 'user', $userId, "Added member via email"]
+        [$groupId, $tokenData['userId'], 'add_member', 'user', $userId, "Added " . userName((int) $userId) . " to the group"]
       );
+
+      Push::toUser((int) $userId, [
+        'type' => 'group_added',
+        'group_id' => (int) $groupId,
+        'actor_id' => (int) $tokenData['userId'],
+        'title' => firstName(userName((int) $tokenData['userId'])) . ' added you to "' . $group['name'] . '"',
+        'body' => 'Tap to see the group',
+      ]);
 
       Response::success(null, 'Member added to group successfully');
     } else {
@@ -748,4 +800,128 @@ function sendInvitationEmail($toEmail, $groupName, $token)
   if (!$success) {
     error_log('Failed to send invitation email to ' . $toEmail . ' token ' . $token);
   }
+}
+
+/** PUT /groups/{id} — name, description, category (group type), simplify_debts. Any active member. */
+function updateGroup(int $groupId)
+{
+  $userId = requireUserId();
+  requireActiveMember($groupId, $userId);
+  $db = getDB();
+  $group = $db->fetchOne('SELECT * FROM expense_groups WHERE id = ?', [$groupId]);
+  if (!$group || $group['is_direct']) {
+    Response::error('Group not found', 404);
+  }
+  $input = getJsonInput();
+  $fields = [];
+  $values = [];
+  $changes = [];
+  if (array_key_exists('name', $input)) {
+    $name = trim((string) $input['name']);
+    if ($name === '') {
+      Response::error('Group name is required', 400);
+    }
+    $fields[] = 'name = ?';
+    $values[] = $name;
+    if ($name !== $group['name']) {
+      $changes[] = "renamed the group to \"$name\"";
+    }
+  }
+  if (array_key_exists('description', $input)) {
+    $fields[] = 'description = ?';
+    $values[] = (string) $input['description'];
+  }
+  if (array_key_exists('category', $input)) {
+    $category = (string) $input['category'];
+    if (!in_array($category, GROUP_TYPES, true)) {
+      Response::error('Unknown group type', 400);
+    }
+    $fields[] = 'category = ?';
+    $values[] = $category;
+  }
+  $simplify = inputBool($input, 'simplify_debts');
+  if ($simplify !== null) {
+    $fields[] = 'simplify_debts = ?';
+    $values[] = $simplify ? 1 : 0;
+    if ($simplify !== (bool) $group['simplify_debts']) {
+      $changes[] = ($simplify ? 'turned on' : 'turned off') . ' simplify debts';
+    }
+  }
+  if (empty($fields)) {
+    Response::error('No fields to update', 400);
+  }
+  $values[] = $groupId;
+  $db->execute('UPDATE expense_groups SET ' . implode(', ', $fields) . ', updated_at = NOW() WHERE id = ?', $values);
+  if (!empty($changes)) {
+    logActivity($groupId, $userId, 'update_group', 'group', $groupId, ucfirst(implode(' and ', $changes)));
+  }
+  getGroupDetails($groupId);
+}
+
+/** DELETE /groups/{id}/members/{userId} — admin only, and only once that member is settled up. */
+function removeMember(int $groupId, int $targetId)
+{
+  $userId = requireUserId();
+  requireAdmin($groupId, $userId);
+  if ($targetId === $userId) {
+    Response::error('Use "Leave group" to remove yourself', 400);
+  }
+  $target = memberRow($groupId, $targetId);
+  if (!$target || $target['status'] === 'left') {
+    Response::error('That person is not in this group', 404);
+  }
+  $nets = ledgerNets(loadLedgers([$groupId])[$groupId]);
+  if (abs($nets[$targetId] ?? 0) > SETTLED_EPSILON_PAISE) {
+    Response::error('Settle up with ' . firstName(userName($targetId)) . ' before removing them', 409);
+  }
+  getDB()->execute('UPDATE group_members SET status = "left", left_at = NOW() WHERE group_id = ? AND user_id = ?', [$groupId, $targetId]);
+  logActivity($groupId, $userId, 'remove_member', 'user', $targetId, 'Removed ' . userName($targetId) . ' from the group');
+  Response::success(null, 'Member removed');
+}
+
+function inviteUrl(string $code): string
+{
+  return PUBLIC_BASE_URL . '/join?code=' . urlencode($code);
+}
+
+/**
+ * POST   /groups/{id}/invite-link → the group's shareable link (created on first use). Any active member.
+ * DELETE /groups/{id}/invite-link → replaces the code so old links stop working. Admin only.
+ */
+function groupInviteLink(int $groupId, bool $rotate)
+{
+  $userId = requireUserId();
+  $rotate ? requireAdmin($groupId, $userId) : requireActiveMember($groupId, $userId);
+  $db = getDB();
+  $group = $db->fetchOne('SELECT id, name, is_direct, invite_code FROM expense_groups WHERE id = ?', [$groupId]);
+  if (!$group || $group['is_direct']) {
+    Response::error('Group not found', 404);
+  }
+  $code = $group['invite_code'];
+  if ($rotate || !$code) {
+    // 16 chars of base62 ≈ 95 bits; collisions are retried by the UNIQUE index
+    for ($i = 0; $i < 5; $i++) {
+      $code = randomCode(16);
+      try {
+        $db->execute('UPDATE expense_groups SET invite_code = ? WHERE id = ?', [$code, $groupId]);
+        break;
+      } catch (Exception $e) {
+        if ($i === 4) {
+          throw $e;
+        }
+      }
+    }
+  }
+  Response::success(['code' => $code, 'url' => inviteUrl($code), 'group_name' => $group['name']]);
+}
+
+function randomCode(int $length): string
+{
+  $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  $out = '';
+  $bytes = random_bytes($length);
+  for ($i = 0; $i < $length; $i++) {
+    $out .= $alphabet[ord($bytes[$i]) % strlen($alphabet)];
+  }
+  return $out;
 }

@@ -2,461 +2,377 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../utils/response.php';
 require_once __DIR__ . '/../utils/jwt.php';
+require_once __DIR__ . '/../utils/auth.php';
+require_once __DIR__ . '/../utils/ledger.php';
+require_once __DIR__ . '/../utils/activity.php';
+require_once __DIR__ . '/../utils/push.php';
+require_once __DIR__ . '/receiptController.php';
+require_once __DIR__ . '/commentController.php';
 
 function handleExpenseRoutes($uri, $method)
 {
-  // Parse URI: /expenses/{groupId} or /expenses/{expenseId}
   $parts = explode('/', trim($uri, '/'));
+  $n = count($parts);
 
-  if (count($parts) >= 2 && $method === 'POST') {
-    // POST /expenses/{groupId}
-    $groupId = $parts[1];
-    createExpense($groupId);
-  } elseif (count($parts) >= 2 && $method === 'GET') {
-    // GET /expenses/{groupId} OR GET /expenses/expense/{expenseId}
-    if ($parts[1] === 'expense' && isset($parts[2])) {
-      $expenseId = $parts[2];
-      getExpense($expenseId);
-    } else {
-      $groupId = $parts[1];
-      getGroupExpenses($groupId);
+  // /expenses/expense/{id}[/comments|/receipt]
+  if ($n >= 3 && $parts[1] === 'expense' && is_numeric($parts[2])) {
+    $expenseId = (int) $parts[2];
+    $sub = $parts[3] ?? null;
+    if ($sub === null && $method === 'GET') {
+      return getExpense($expenseId);
     }
-  } elseif (count($parts) >= 2 && $method === 'PUT') {
-    // PUT /expenses/{expenseId}
-    $expenseId = $parts[1];
-    updateExpense($expenseId);
-  } elseif (count($parts) >= 2 && $method === 'DELETE') {
-    // DELETE /expenses/{expenseId}
-    $expenseId = $parts[1];
-    deleteExpense($expenseId);
-  } else {
-    Response::error("Route not found: $method $uri", 404);
+    if ($sub === 'comments' && $method === 'GET') {
+      return listComments($expenseId);
+    }
+    if ($sub === 'comments' && $method === 'POST') {
+      return addComment($expenseId);
+    }
+    if ($sub === 'receipt' && $method === 'POST') {
+      return uploadReceipt($expenseId);
+    }
+    if ($sub === 'receipt' && $method === 'GET') {
+      return streamReceipt($expenseId);
+    }
+    if ($sub === 'receipt' && $method === 'DELETE') {
+      return deleteReceipt($expenseId);
+    }
+  } elseif ($n === 2 && is_numeric($parts[1])) {
+    $id = (int) $parts[1];
+    if ($method === 'POST') {
+      return createExpense($id);       // id = group
+    }
+    if ($method === 'GET') {
+      return getGroupExpenses($id);    // id = group
+    }
+    if ($method === 'PUT') {
+      return updateExpense($id);       // id = expense
+    }
+    if ($method === 'DELETE') {
+      return deleteExpense($id);       // id = expense
+    }
+  }
+  Response::error("Route not found: $method $uri", 404);
+}
+
+/** Members who can appear in a split: active and invited-but-not-joined (pending). */
+function splittableMemberIds(int $groupId): array
+{
+  $rows = getDB()->fetchAll("SELECT user_id FROM group_members WHERE group_id = ? AND status IN ('active', 'pending')", [$groupId]);
+  return array_map(function ($r) { return (int) $r['user_id']; }, $rows);
+}
+
+/**
+ * Validates and computes the splits for a create/full-update request.
+ * @return array [splitType, splits (computeSplits output)]
+ */
+function resolveSplits(array $input, int $groupId, int $totalPaise, int $paidBy): array
+{
+  [$type, $entries] = readSplitInput($input);
+  $type = $type ?: 'equal';
+  $allowed = splittableMemberIds($groupId);
+  if ($entries === null) {
+    // No participants named: everyone in the group (incl. people invited but not joined yet), equally
+    if ($type !== 'equal') {
+      Response::error('Splits are required for this split type', 400);
+    }
+    $entries = array_map(function ($uid) { return ['user_id' => $uid]; }, $allowed);
+  }
+  foreach ($entries as $e) {
+    if (!in_array((int) $e['user_id'], $allowed, true)) {
+      Response::error('Everyone in the split must be a member of this group', 400);
+    }
+  }
+  try {
+    return [$type, computeSplits($type, $totalPaise, $paidBy, $entries)];
+  } catch (SplitError $e) {
+    Response::error($e->getMessage(), 400);
   }
 }
 
-function createExpense($groupId)
+function writeSplits(PDO $conn, int $expenseId, array $splits): void
 {
-  $tokenData = JWTHandler::getUserFromToken();
-  if (!$tokenData)
-    Response::error('Unauthorized', 401);
+  $stmt = $conn->prepare('INSERT INTO expense_splits (expense_id, user_id, amount, percentage, shares, adjustment) VALUES (?, ?, ?, ?, ?, ?)');
+  foreach ($splits as $s) {
+    $stmt->execute([$expenseId, $s['user_id'], fromPaise($s['amount']), $s['percentage'], $s['shares'], $s['adjustment']]);
+  }
+}
 
-  $userId = $tokenData['userId'];
+/** Activity snapshot: what the expense does to each person (paise). */
+function expenseMeta(array $engine): array
+{
+  return [
+    'description' => $engine['description'],
+    'amount' => $engine['amount'],
+    'category' => $engine['category'],
+    'paid_by' => $engine['paid_by'],
+    'nets' => expenseNets($engine),
+  ];
+}
+
+function groupDisplayName(int $groupId, int $forUserId): string
+{
+  $g = getDB()->fetchOne('SELECT name, is_direct FROM expense_groups WHERE id = ?', [$groupId]);
+  if (!$g) {
+    return '';
+  }
+  if (!$g['is_direct']) {
+    return $g['name'];
+  }
+  $other = getDB()->fetchOne('SELECT u.name FROM group_members gm INNER JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? AND gm.user_id != ? LIMIT 1', [$groupId, $forUserId]);
+  return $other ? $other['name'] : '';
+}
+
+/** Per-recipient push for an expense event. $nets = user_id => paise (from the snapshot). */
+function pushExpenseEvent(string $type, int $actorId, int $groupId, ?int $expenseId, string $description, int $amountPaise, array $nets): void
+{
+  $actor = firstName(userName($actorId));
+  $verb = ['expense_added' => 'added', 'expense_updated' => 'updated', 'expense_deleted' => 'deleted'][$type];
+  $group = getDB()->fetchOne('SELECT is_direct FROM expense_groups WHERE id = ?', [$groupId]);
+  $isDirect = $group && $group['is_direct'];
+  foreach ($nets as $uid => $net) {
+    if ((int) $uid === $actorId) {
+      continue;
+    }
+    $groupName = groupDisplayName($groupId, (int) $uid);
+    $impact = $type === 'expense_deleted' ? '' : ($net < 0 ? ' · you owe ' . formatInr(-$net) : ($net > 0 ? ' · you get back ' . formatInr($net) : ''));
+    Push::toUser((int) $uid, [
+      'type' => $type,
+      'group_id' => $groupId,
+      'expense_id' => $expenseId,
+      'actor_id' => $actorId,
+      'title' => $isDirect ? "$actor $verb \"$description\"" : "$actor $verb \"$description\" in $groupName",
+      'body' => formatInr($amountPaise) . $impact,
+    ]);
+  }
+}
+
+function createExpense(int $groupId)
+{
+  $userId = requireUserId();
   $input = getJsonInput();
+  requireActiveMember($groupId, $userId);
 
-  $description = $input['description'] ?? null;
-  $amount = $input['amount'] ?? null;
-  $category = $input['category'] ?? 'general';
+  $description = trim((string) ($input['description'] ?? ''));
+  $amountPaise = toPaise($input['amount'] ?? 0);
   $date = $input['date'] ?? null;
-  $notes = $input['notes'] ?? null;
-  $paidBy = $input['paid_by'] ?? $userId; // Use paid_by from input, default to current user
-  $splitType = $input['splitType'] ?? 'equal';
-  $splits = $input['splits'] ?? [];
+  $category = $input['category'] ?? 'general';
+  $notes = isset($input['notes']) && $input['notes'] !== '' ? $input['notes'] : null;
+  $paidBy = (int) ($input['paid_by'] ?? ($input['paidBy'] ?? $userId));
 
-  // Validate input
-  if (!$description || !$amount || !$date) {
+  if ($description === '' || $amountPaise <= 0 || !$date) {
     Response::error('Description, amount, and date are required', 400);
   }
-
-  if ($amount <= 0) {
-    Response::error('Amount must be greater than 0', 400);
+  if (!in_array($paidBy, splittableMemberIds($groupId), true)) {
+    Response::error('The person who paid must be a member of this group', 400);
   }
 
+  [$splitType, $splits] = resolveSplits($input, $groupId, $amountPaise, $paidBy);
+
+  $conn = getDB()->getConnection();
+  $conn->beginTransaction();
   try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    // Get group members (only active members)
-    $stmt = $db->prepare('SELECT user_id FROM group_members WHERE group_id = ? AND status = "active"');
-    $stmt->execute([$groupId]);
-    $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $memberIds = array_column($members, 'user_id');
-
-    // Validate that paidBy user is an active member of the group
-    if (!in_array($paidBy, $memberIds)) {
-      Response::error('The person who paid must be an active member of this group', 400);
-    }
-
-    // Calculate splits
-    $expenseSplits = [];
-
-    if ($splitType === 'equal' || !$splitType) {
-      $splitAmount = round($amount / count($memberIds), 2);
-      foreach ($memberIds as $memberId) {
-        $expenseSplits[] = [
-          'userId' => $memberId,
-          'amount' => $splitAmount,
-          'percentage' => round(100 / count($memberIds), 2)
-        ];
-      }
-    } elseif ($splitType === 'unequal') {
-      if (empty($splits)) {
-        Response::error('Splits are required for unequal split type', 400);
-      }
-      $totalSplit = array_sum(array_column($splits, 'amount'));
-      if (abs($totalSplit - $amount) > 0.01) {
-        Response::error('Split amounts must equal total amount', 400);
-      }
-      foreach ($splits as $split) {
-        $expenseSplits[] = [
-          'userId' => $split['userId'],
-          'amount' => floatval($split['amount']),
-          'percentage' => round(($split['amount'] / $amount) * 100, 2)
-        ];
-      }
-    } elseif ($splitType === 'percentage') {
-      if (empty($splits)) {
-        Response::error('Splits are required for percentage split type', 400);
-      }
-      $totalPercentage = array_sum(array_column($splits, 'percentage'));
-      if (abs($totalPercentage - 100) > 0.01) {
-        Response::error('Percentages must total 100%', 400);
-      }
-      foreach ($splits as $split) {
-        $expenseSplits[] = [
-          'userId' => $split['userId'],
-          'amount' => round(($amount * $split['percentage']) / 100, 2),
-          'percentage' => floatval($split['percentage'])
-        ];
-      }
-    }
-
-    // Start transaction
-    $db->beginTransaction();
-
-    try {
-      // Insert expense
-      $stmt = $db->prepare('
-        INSERT INTO expenses (group_id, description, amount, category, paid_by, split_type, date, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ');
-      $stmt->execute([$groupId, $description, $amount, $category, $paidBy, $splitType, $date, $notes]);
-      $expenseId = $db->lastInsertId();
-
-      // Insert splits
-      $stmt = $db->prepare('
-        INSERT INTO expense_splits (expense_id, user_id, amount, percentage)
-        VALUES (?, ?, ?, ?)
-      ');
-      foreach ($expenseSplits as $split) {
-        $stmt->execute([$expenseId, $split['userId'], $split['amount'], $split['percentage']]);
-      }
-
-      // Log activity
-      $stmt = $db->prepare('
-        INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description)
-        VALUES (?, ?, ?, ?, ?, ?)
-      ');
-      $stmt->execute([
-        $groupId,
-        $userId,
-        'create_expense',
-        'expense',
-        $expenseId,
-        "Added expense \"$description\" for ₹$amount"
-      ]);
-
-      $db->commit();
-
-      Response::success([
-        'id' => (int) $expenseId,
-        'description' => $description,
-        'amount' => floatval($amount),
-        'category' => $category,
-        'date' => $date
-      ], 'Expense created successfully', 201);
-
-    } catch (Exception $e) {
-      $db->rollBack();
-      throw $e;
-    }
-
+    $stmt = $conn->prepare('INSERT INTO expenses (group_id, description, amount, category, paid_by, created_by, split_type, date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt->execute([$groupId, $description, fromPaise($amountPaise), $category, $paidBy, $userId, $splitType, $date, $notes]);
+    $expenseId = (int) $conn->lastInsertId();
+    writeSplits($conn, $expenseId, $splits);
+    $conn->commit();
   } catch (Exception $e) {
+    $conn->rollBack();
     Response::error('Failed to create expense: ' . $e->getMessage(), 500);
   }
+
+  $engine = expenseEngineRow($expenseId);
+  $meta = expenseMeta($engine);
+  logActivity($groupId, $userId, 'create_expense', 'expense', $expenseId, "Added expense \"$description\" for " . formatInr($amountPaise), $meta);
+  getDB()->execute('UPDATE expense_groups SET updated_at = NOW() WHERE id = ?', [$groupId]);
+  pushExpenseEvent('expense_added', $userId, $groupId, $expenseId, $description, $amountPaise, $meta['nets']);
+
+  $expense = loadExpenses('e.id = ?', [$expenseId], $userId)[0];
+  // v1 clients read id/description/amount/category/date from the top level — those keys are all here
+  Response::success($expense, 'Expense created successfully', 201);
 }
 
-function getGroupExpenses($groupId)
+function getGroupExpenses(int $groupId)
 {
-  $tokenData = JWTHandler::getUserFromToken();
-  if (!$tokenData)
-    Response::error('Unauthorized', 401);
+  $userId = requireUserId();
+  requireActiveMember($groupId, $userId);
+  Response::success(loadExpenses('e.group_id = ?', [$groupId], $userId));
+}
 
-  $userId = $tokenData['userId'];
-
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    // Get expenses
-    $stmt = $db->prepare('
-      SELECT 
-        e.*,
-        u.name as paid_by_name,
-        u.profile_picture as paid_by_picture
-      FROM expenses e
-      INNER JOIN users u ON e.paid_by = u.id
-      WHERE e.group_id = ?
-      ORDER BY e.date DESC, e.created_at DESC
-    ');
-    $stmt->execute([$groupId]);
-    $expenses = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Get splits for each expense
-    foreach ($expenses as &$expense) {
-      $stmt = $db->prepare('
-        SELECT 
-          es.*,
-          u.name as user_name
-        FROM expense_splits es
-        INNER JOIN users u ON es.user_id = u.id
-        WHERE es.expense_id = ?
-      ');
-      $stmt->execute([$expense['id']]);
-      $expense['splits'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-      // Convert numeric fields
-      $expense['id'] = (int) $expense['id'];
-      $expense['group_id'] = (int) $expense['group_id'];
-      $expense['paid_by'] = (int) $expense['paid_by'];
-      $expense['amount'] = floatval($expense['amount']);
-    }
-
-    Response::success($expenses);
-
-  } catch (Exception $e) {
-    Response::error('Failed to fetch expenses: ' . $e->getMessage(), 500);
+function getExpense(int $expenseId)
+{
+  $userId = requireUserId();
+  $row = getDB()->fetchOne('SELECT group_id FROM expenses WHERE id = ?', [$expenseId]);
+  if (!$row) {
+    Response::error('Expense not found', 404);
   }
+  requireActiveMember((int) $row['group_id'], $userId);
+  Response::success(loadExpenses('e.id = ?', [$expenseId], $userId)[0]);
 }
 
-function updateExpense($expenseId)
+/**
+ * Any active member can edit. A request with paid_by / split_type / splits re-splits the expense
+ * from scratch; a request with only a new amount (the v1 edit screen) rescales the existing split
+ * in its own mode.
+ */
+function updateExpense(int $expenseId)
 {
-  $tokenData = JWTHandler::getUserFromToken();
-  if (!$tokenData)
-    Response::error('Unauthorized', 401);
-
-  $userId = $tokenData['userId'];
+  $userId = requireUserId();
   $input = getJsonInput();
+  $db = getDB();
+  $expense = $db->fetchOne('SELECT * FROM expenses WHERE id = ?', [$expenseId]);
+  if (!$expense) {
+    Response::error('Expense not found', 404);
+  }
+  $groupId = (int) $expense['group_id'];
+  requireActiveMember($groupId, $userId);
+  $before = expenseEngineRow($expenseId);
 
+  $fields = [];
+  $values = [];
+  foreach (['description', 'category', 'date', 'notes'] as $f) {
+    if (array_key_exists($f, $input)) {
+      $fields[] = "$f = ?";
+      $values[] = $f === 'description' ? trim((string) $input[$f]) : ($input[$f] === '' ? null : $input[$f]);
+    }
+  }
+  if (array_key_exists('description', $input) && trim((string) $input['description']) === '') {
+    Response::error('Description can\'t be empty', 400);
+  }
+
+  $amountPaise = array_key_exists('amount', $input) ? toPaise($input['amount']) : toPaise($expense['amount']);
+  if ($amountPaise <= 0) {
+    Response::error('Amount must be greater than 0', 400);
+  }
+  $paidBy = (int) ($input['paid_by'] ?? ($input['paidBy'] ?? $expense['paid_by']));
+  $fullResplit = isset($input['paid_by']) || isset($input['paidBy']) || isset($input['split_type']) || isset($input['splitType']) || isset($input['splits']);
+  $newSplits = null;
+  $splitType = $expense['split_type'];
+
+  if ($fullResplit) {
+    if (!in_array($paidBy, splittableMemberIds($groupId), true)) {
+      Response::error('The person who paid must be a member of this group', 400);
+    }
+    if (!isset($input['split_type']) && !isset($input['splitType'])) {
+      $input['split_type'] = $expense['split_type'];
+    }
+    if (!isset($input['splits'])) {
+      $input['splits'] = storedSplitEntries($expenseId);
+    }
+    [$splitType, $newSplits] = resolveSplits($input, $groupId, $amountPaise, $paidBy);
+  } elseif ($amountPaise !== toPaise($expense['amount'])) {
+    $newSplits = rescaleSplits($expense, $expenseId, $amountPaise);
+  }
+
+  if (empty($fields) && $newSplits === null) {
+    Response::error('No fields to update', 400);
+  }
+
+  $conn = $db->getConnection();
+  $conn->beginTransaction();
   try {
-    $db = getDB()->getConnection();
-
-    // Get expense
-    $stmt = $db->prepare('SELECT * FROM expenses WHERE id = ?');
-    $stmt->execute([$expenseId]);
-    $expense = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$expense) {
-      Response::error('Expense not found', 404);
-    }
-
-    // Check if user created the expense
-    if ($expense['paid_by'] != $userId) {
-      Response::error('Only the creator can update this expense', 403);
-    }
-
-    $updates = [];
-    $values = [];
-
-    if (isset($input['description'])) {
-      $updates[] = 'description = ?';
-      $values[] = $input['description'];
-    }
-    if (isset($input['amount'])) {
-      $updates[] = 'amount = ?';
-      $values[] = $input['amount'];
-    }
-    if (isset($input['category'])) {
-      $updates[] = 'category = ?';
-      $values[] = $input['category'];
-    }
-    if (isset($input['date'])) {
-      $updates[] = 'date = ?';
-      $values[] = $input['date'];
-    }
-    if (isset($input['notes'])) {
-      $updates[] = 'notes = ?';
-      $values[] = $input['notes'];
-    }
-
-    if (empty($updates)) {
-      Response::error('No fields to update', 400);
-    }
-
+    $fields[] = 'amount = ?';
+    $values[] = fromPaise($amountPaise);
+    $fields[] = 'paid_by = ?';
+    $values[] = $paidBy;
+    $fields[] = 'split_type = ?';
+    $values[] = $splitType;
+    $fields[] = 'updated_by = ?';
+    $values[] = $userId;
     $values[] = $expenseId;
-
-    $stmt = $db->prepare('UPDATE expenses SET ' . implode(', ', $updates) . ' WHERE id = ?');
-    $stmt->execute($values);
-
-    // If amount changed, recalculate splits to keep distribution consistent
-    if (isset($input['amount'])) {
-      $newAmount = floatval($input['amount']);
-      $oldAmount = floatval($expense['amount']);
-
-      // Fetch current splits
-      $stmt = $db->prepare('SELECT * FROM expense_splits WHERE expense_id = ? ORDER BY id ASC');
-      $stmt->execute([$expenseId]);
-      $splits = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-      if (count($splits) > 0) {
-        $splitType = $expense['split_type'];
-
-        // Helper to persist updates and ensure sums match
-        $totalAssigned = 0.0;
-        $updated = [];
-
-        if ($splitType === 'equal') {
-          $count = count($splits);
-          $share = round($newAmount / $count, 2);
-          foreach ($splits as $i => $s) {
-            $amt = $share;
-            // Last split takes the remainder to avoid rounding issues
-            if ($i === $count - 1) {
-              $amt = round($newAmount - $totalAssigned, 2);
-            }
-            $totalAssigned += $amt;
-            $updated[] = ['id' => $s['id'], 'amount' => $amt];
-          }
-        } elseif ($splitType === 'percentage') {
-          foreach ($splits as $i => $s) {
-            $pct = isset($s['percentage']) ? floatval($s['percentage']) : 0.0;
-            $amt = round($newAmount * ($pct / 100.0), 2);
-            // Last split adjust for rounding
-            if ($i === count($splits) - 1) {
-              $amt = round($newAmount - $totalAssigned, 2);
-            }
-            $totalAssigned += $amt;
-            $updated[] = ['id' => $s['id'], 'amount' => $amt];
-          }
-        } else { // unequal
-          // If old amount is zero, distribute equally to avoid division by zero
-          $factor = $oldAmount > 0 ? ($newAmount / $oldAmount) : (1.0 / count($splits));
-          foreach ($splits as $i => $s) {
-            $amt = round(floatval($s['amount']) * $factor, 2);
-            if ($i === count($splits) - 1) {
-              $amt = round($newAmount - $totalAssigned, 2);
-            }
-            $totalAssigned += $amt;
-            $updated[] = ['id' => $s['id'], 'amount' => $amt];
-          }
-        }
-
-        // Persist updated split amounts
-        $updStmt = $db->prepare('UPDATE expense_splits SET amount = ? WHERE id = ?');
-        foreach ($updated as $u) {
-          $updStmt->execute([$u['amount'], $u['id']]);
-        }
-      }
+    $conn->prepare('UPDATE expenses SET ' . implode(', ', $fields) . ' WHERE id = ?')->execute($values);
+    if ($newSplits !== null) {
+      $conn->prepare('DELETE FROM expense_splits WHERE expense_id = ?')->execute([$expenseId]);
+      writeSplits($conn, $expenseId, $newSplits);
     }
-
-    // Return the updated expense with splits so clients can refresh UI
-    $stmt = $db->prepare('SELECT e.*, u.name as paid_by_name, u.profile_picture as paid_by_picture FROM expenses e INNER JOIN users u ON e.paid_by = u.id WHERE e.id = ?');
-    $stmt->execute([$expenseId]);
-    $updatedExpense = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    // Fetch splits
-    $stmt = $db->prepare('SELECT es.*, u.name as user_name FROM expense_splits es INNER JOIN users u ON es.user_id = u.id WHERE es.expense_id = ?');
-    $stmt->execute([$expenseId]);
-    $updatedExpense['splits'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Normalize numeric fields
-    $updatedExpense['id'] = (int) $updatedExpense['id'];
-    $updatedExpense['group_id'] = (int) $updatedExpense['group_id'];
-    $updatedExpense['paid_by'] = (int) $updatedExpense['paid_by'];
-    $updatedExpense['amount'] = floatval($updatedExpense['amount']);
-
-    Response::success(['message' => 'Expense updated successfully', 'expense' => $updatedExpense]);
-
+    $conn->commit();
   } catch (Exception $e) {
+    $conn->rollBack();
     Response::error('Failed to update expense: ' . $e->getMessage(), 500);
   }
+
+  $after = expenseEngineRow($expenseId);
+  $meta = expenseMeta($after);
+  $meta['before'] = ['amount' => $before['amount'], 'description' => $before['description'], 'nets' => expenseNets($before)];
+  logActivity($groupId, $userId, 'update_expense', 'expense', $expenseId, "Updated expense \"{$after['description']}\"", $meta);
+  getDB()->execute('UPDATE expense_groups SET updated_at = NOW() WHERE id = ?', [$groupId]);
+  // Tell everyone involved before or after the edit
+  $notify = $meta['nets'] + array_map(function () { return 0; }, $meta['before']['nets']);
+  pushExpenseEvent('expense_updated', $userId, $groupId, $expenseId, $after['description'], $after['amount'], $notify);
+
+  $updated = loadExpenses('e.id = ?', [$expenseId], $userId)[0];
+  // v1 clients read data.expense
+  Response::success(array_merge($updated, ['message' => 'Expense updated successfully', 'expense' => $updated]));
 }
 
-function deleteExpense($expenseId)
+/** The stored split as computeSplits() input, so a payer-only change keeps the same split. */
+function storedSplitEntries(int $expenseId): array
 {
-  $tokenData = JWTHandler::getUserFromToken();
-  if (!$tokenData)
-    Response::error('Unauthorized', 401);
+  $rows = getDB()->fetchAll('SELECT user_id, amount, percentage, shares, adjustment FROM expense_splits WHERE expense_id = ? ORDER BY user_id', [$expenseId]);
+  return array_map(function ($r) {
+    return [
+      'user_id' => (int) $r['user_id'],
+      'amount' => (float) $r['amount'],
+      'percentage' => $r['percentage'] !== null ? (float) $r['percentage'] : null,
+      'shares' => $r['shares'] !== null ? (float) $r['shares'] : null,
+      'adjustment' => $r['adjustment'] !== null ? (float) $r['adjustment'] : null,
+    ];
+  }, $rows);
+}
 
-  $userId = $tokenData['userId'];
-
+/** New amount, same split: equal/percentage/shares/adjustment recompute; exact amounts scale proportionally. */
+function rescaleSplits(array $expense, int $expenseId, int $amountPaise): array
+{
+  $entries = storedSplitEntries($expenseId);
+  $type = $expense['split_type'] ?: 'equal';
+  if ($type === 'unequal') {
+    $old = toPaise($expense['amount']);
+    $scaled = [];
+    foreach ($entries as $e) {
+      $scaled[] = ['user_id' => $e['user_id'], 'amount' => $old > 0 ? round($e['amount'] * $amountPaise / $old, 2) : 0];
+    }
+    $entries = $scaled;
+    // Proportional rounding can be off by more than a paisa; spread it like any remainder
+    $sum = array_sum(array_map(function ($e) { return toPaise($e['amount']); }, $entries));
+    $amounts = [];
+    foreach ($entries as $e) {
+      $amounts[$e['user_id']] = toPaise($e['amount']);
+    }
+    distributeRemainder($amounts, $amountPaise - $sum, (int) $expense['paid_by']);
+    $entries = [];
+    foreach ($amounts as $uid => $p) {
+      $entries[] = ['user_id' => $uid, 'amount' => fromPaise($p)];
+    }
+  } elseif ($type === 'percentage' && array_sum(array_map(function ($e) { return (float) $e['percentage']; }, $entries)) < 99.99) {
+    // Old rows without usable percentages: fall back to equal
+    $type = 'equal';
+  }
   try {
-    $db = getDB()->getConnection();
-
-    // Get expense
-    $stmt = $db->prepare('SELECT * FROM expenses WHERE id = ?');
-    $stmt->execute([$expenseId]);
-    $expense = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$expense) {
-      Response::error('Expense not found', 404);
-    }
-
-    // Check if user created the expense or is group admin (and is active member)
-    $stmt = $db->prepare('
-      SELECT role, status FROM group_members 
-      WHERE group_id = ? AND user_id = ?
-    ');
-    $stmt->execute([$expense['group_id'], $userId]);
-    $member = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    if ($expense['paid_by'] != $userId && $member['role'] !== 'admin') {
-      Response::error('Only the creator or group admin can delete this expense', 403);
-    }
-
-    // Delete expense (splits will be cascade deleted)
-    $stmt = $db->prepare('DELETE FROM expenses WHERE id = ?');
-    $stmt->execute([$expenseId]);
-
-    Response::success(['message' => 'Expense deleted successfully']);
-
-  } catch (Exception $e) {
-    Response::error('Failed to delete expense: ' . $e->getMessage(), 500);
+    return computeSplits($type, $amountPaise, (int) $expense['paid_by'], $entries);
+  } catch (SplitError $e) {
+    return computeSplits('equal', $amountPaise, (int) $expense['paid_by'], array_map(function ($e) { return ['user_id' => $e['user_id']]; }, $entries));
   }
 }
 
-function getExpense($expenseId)
+function deleteExpense(int $expenseId)
 {
-  try {
-    $db = getDB()->getConnection();
-
-    $stmt = $db->prepare('SELECT e.*, u.name as paid_by_name, u.profile_picture as paid_by_picture FROM expenses e INNER JOIN users u ON e.paid_by = u.id WHERE e.id = ?');
-    $stmt->execute([$expenseId]);
-    $expense = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$expense) {
-      Response::error('Expense not found', 404);
-    }
-
-    $stmt = $db->prepare('SELECT es.*, u.name as user_name FROM expense_splits es INNER JOIN users u ON es.user_id = u.id WHERE es.expense_id = ?');
-    $stmt->execute([$expenseId]);
-    $expense['splits'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Normalize numeric fields
-    $expense['id'] = (int) $expense['id'];
-    $expense['group_id'] = (int) $expense['group_id'];
-    $expense['paid_by'] = (int) $expense['paid_by'];
-    $expense['amount'] = floatval($expense['amount']);
-
-    Response::success($expense);
-  } catch (Exception $e) {
-    Response::error('Failed to fetch expense: ' . $e->getMessage(), 500);
+  $userId = requireUserId();
+  $db = getDB();
+  $expense = $db->fetchOne('SELECT * FROM expenses WHERE id = ?', [$expenseId]);
+  if (!$expense) {
+    Response::error('Expense not found', 404);
   }
+  $groupId = (int) $expense['group_id'];
+  requireActiveMember($groupId, $userId);
+
+  $engine = expenseEngineRow($expenseId);
+  $meta = expenseMeta($engine);
+  removeReceiptFile($expense['receipt_url']);
+  $db->execute('DELETE FROM expenses WHERE id = ?', [$expenseId]);
+
+  logActivity($groupId, $userId, 'delete_expense', 'expense', $expenseId, "Deleted expense \"{$engine['description']}\"", $meta);
+  getDB()->execute('UPDATE expense_groups SET updated_at = NOW() WHERE id = ?', [$groupId]);
+  pushExpenseEvent('expense_deleted', $userId, $groupId, null, $engine['description'], $engine['amount'], $meta['nets']);
+
+  Response::success(['message' => 'Expense deleted successfully']);
 }

@@ -45,6 +45,17 @@ class JWTHandler
       return null;
     }
 
+    // A deleted (anonymised) account's tokens stop working immediately, not when they expire
+    static $alive = [];
+    $userId = (int) ($decoded['userId'] ?? 0);
+    if (!isset($alive[$userId])) {
+      $row = getDB()->fetchOne('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL', [$userId]);
+      $alive[$userId] = (bool) $row;
+    }
+    if (!$alive[$userId]) {
+      return null;
+    }
+
     return $decoded;
   }
 }

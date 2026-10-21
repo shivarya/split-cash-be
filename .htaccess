@@ -8,6 +8,9 @@
     RewriteCond %{REQUEST_METHOD} OPTIONS
     RewriteRule ^(.*)$ $1 [R=200,L]
     
+    # Internals are never served directly (only index.php and the public .html pages are)
+    RewriteRule ^(vendor|scripts|database|uploads|debug|config|utils|controllers|\.git|\.github)(/|$) - [F,L]
+
     # Route all requests to index.php (except actual files/dirs)
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
@@ -22,7 +25,7 @@
 </IfModule>
 
 # Security
-<FilesMatch "\.(env|log)$">
+<FilesMatch "(\.(env|log|sql|md|lock|ps1|sh)|^error_log|^composer\.json|^route-test\.php|^\.gitignore)$">
     Order allow,deny
     Deny from all
 </FilesMatch>

@@ -25,3 +25,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Receipt photos (prod keeps them outside the web root via UPLOADS_DIR)
+/uploads/

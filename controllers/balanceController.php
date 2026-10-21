@@ -2,456 +2,284 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../utils/response.php';
 require_once __DIR__ . '/../utils/jwt.php';
+require_once __DIR__ . '/../utils/auth.php';
+require_once __DIR__ . '/../utils/overview.php';
+require_once __DIR__ . '/../utils/activity.php';
+require_once __DIR__ . '/../utils/push.php';
 
 function handleBalanceRoutes($uri, $method)
 {
-  $tokenData = JWTHandler::getUserFromToken();
-  if (!$tokenData)
-    Response::error('Unauthorized', 401);
-
-  $userId = $tokenData['userId'];
+  $userId = requireUserId();
   $parts = explode('/', trim($uri, '/'));
+  $n = count($parts);
 
-  // Route handling
-  if ($method === 'GET' && count($parts) == 2 && $parts[1] === 'my-balances') {
-    // GET /balances/my-balances
+  if ($method === 'GET' && $n == 2 && $parts[1] === 'overview') {
+    // GET /balances/overview (native app: Groups + Friends tabs)
+    Response::success(buildOverview($userId));
+  } elseif ($method === 'GET' && $n == 2 && $parts[1] === 'my-balances') {
     getMyBalances($userId);
-  } elseif ($method === 'GET' && count($parts) == 2 && is_numeric($parts[1])) {
-    // GET /balances/{groupId}
-    $groupId = $parts[1];
-    getGroupBalances($groupId, $userId);
-  } elseif ($method === 'GET' && count($parts) == 4 && $parts[2] === 'settlements' && $parts[3] === 'suggestions') {
-    // GET /balances/{groupId}/settlements/suggestions
-    $groupId = $parts[1];
-    getSettlementSuggestions($groupId, $userId);
-  } elseif ($method === 'GET' && count($parts) == 4 && $parts[2] === 'settlements' && $parts[3] === 'history') {
-    // GET /balances/{groupId}/settlements/history
-    $groupId = $parts[1];
-    getSettlementHistory($groupId, $userId);
-  } elseif ($method === 'POST' && count($parts) == 3 && $parts[2] === 'settlements') {
-    // POST /balances/{groupId}/settlements
-    $groupId = $parts[1];
-    recordSettlement($groupId, $userId);
-  } elseif ($method === 'DELETE' && count($parts) == 4 && $parts[2] === 'settlements' && is_numeric($parts[3])) {
-    // DELETE /balances/{groupId}/settlements/{settlementId}
-    $groupId = $parts[1];
-    $settlementId = $parts[3];
-    deleteSettlement($groupId, $userId, $settlementId);
-  } elseif ($method === 'GET' && count($parts) == 3 && $parts[2] === 'activity') {
-    // GET /balances/{groupId}/activity
-    $groupId = $parts[1];
-    getGroupActivity($groupId, $userId);
+  } elseif ($method === 'GET' && $n == 2 && is_numeric($parts[1])) {
+    getGroupBalances((int) $parts[1], $userId);
+  } elseif ($method === 'GET' && $n == 3 && is_numeric($parts[1]) && $parts[2] === 'debts') {
+    // GET /balances/{groupId}/debts (native app: group balances + settle up)
+    requireActiveMember((int) $parts[1], $userId);
+    Response::success(buildGroupDebts((int) $parts[1]));
+  } elseif ($method === 'GET' && $n == 4 && $parts[2] === 'settlements' && $parts[3] === 'suggestions') {
+    getSettlementSuggestions((int) $parts[1], $userId);
+  } elseif ($method === 'GET' && $n == 4 && $parts[2] === 'settlements' && $parts[3] === 'history') {
+    getSettlementHistory((int) $parts[1], $userId);
+  } elseif ($method === 'POST' && $n == 3 && $parts[2] === 'settlements') {
+    recordSettlement((int) $parts[1], $userId);
+  } elseif ($method === 'DELETE' && $n == 4 && $parts[2] === 'settlements' && is_numeric($parts[3])) {
+    deleteSettlement((int) $parts[1], $userId, (int) $parts[3]);
+  } elseif ($method === 'GET' && $n == 3 && $parts[2] === 'activity') {
+    getGroupActivity((int) $parts[1], $userId);
   } else {
     Response::error("Route not found: $method $uri", 404);
   }
 }
 
-function getMyBalances($userId)
+/** v1 dashboard: the user's net in each regular group (hidden 1:1 groups are native-only). */
+function getMyBalances(int $userId)
 {
-  try {
-    $db = getDB()->getConnection();
-
-    // Get all groups the user is part of with balances (only active memberships)
-    $stmt = $db->prepare("
-      SELECT 
-        g.id as group_id,
-        g.name as group_name,
-        g.category,
-        g.image,
-        COUNT(DISTINCT CASE WHEN gm2.status = 'active' THEN gm2.user_id END) as member_count
-      FROM expense_groups g
-      INNER JOIN group_members gm ON g.id = gm.group_id
-      LEFT JOIN group_members gm2 ON g.id = gm2.group_id
-      WHERE gm.user_id = ? AND gm.status = 'active'
-      GROUP BY g.id, g.name, g.category, g.image
-      ORDER BY g.updated_at DESC
-    ");
-    $stmt->execute([$userId]);
-    $groups = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $result = [];
-
-    foreach ($groups as $group) {
-      $groupId = $group['group_id'];
-
-      // Get user's balance in this group using subqueries to avoid duplicate joins (including settlements)
-      $stmt = $db->prepare("SELECT
-              (SELECT COALESCE(SUM(amount),0) FROM expenses e2 WHERE e2.group_id = ? AND e2.paid_by = ?) as total_paid,
-              (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = ? AND es2.user_id = ?) as total_owed,
-              (SELECT COALESCE(SUM(amount),0) FROM settlements WHERE group_id = ? AND to_user_id = ?) as settlements_received,
-              (SELECT COALESCE(SUM(amount),0) FROM settlements WHERE group_id = ? AND from_user_id = ?) as settlements_paid
-            ");
-      $stmt->execute([$groupId, $userId, $groupId, $userId, $groupId, $userId, $groupId, $userId]);
-      $balance = $stmt->fetch(PDO::FETCH_ASSOC);
-
-      $totalPaid = floatval($balance['total_paid']);
-      $totalOwed = floatval($balance['total_owed']);
-      $settlementsReceived = floatval($balance['settlements_received']);
-      $settlementsPaid = floatval($balance['settlements_paid']);
-      $netBalance = $totalPaid - $totalOwed - $settlementsReceived + $settlementsPaid;
-
-      $result[] = [
-        'group_id' => (int) $groupId,
-        'group_name' => $group['group_name'],
-        'category' => $group['category'],
-        'image' => $group['image'],
-        'member_count' => (int) $group['member_count'],
-        'balance' => $netBalance,
-        'total_paid' => $totalPaid,
-        'total_owed' => $totalOwed
-      ];
-    }
-
-    Response::success($result);
-  } catch (Exception $e) {
-    Response::error('Failed to fetch balances: ' . $e->getMessage(), 500);
-  }
-}
-
-function getGroupBalances($groupId, $userId)
-{
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is a member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    // Get balances with user info. Use subqueries per user to avoid duplicated sums from joins.
-    $stmt = $db->prepare("SELECT
-            u.id,
-            u.name,
-            u.email,
-            u.profile_picture,
-            (SELECT COALESCE(SUM(amount),0) FROM expenses e2 WHERE e2.group_id = gm.group_id AND e2.paid_by = u.id) as total_paid,
-            (SELECT COALESCE(SUM(es2.amount),0) FROM expense_splits es2 INNER JOIN expenses e3 ON es2.expense_id = e3.id WHERE e3.group_id = gm.group_id AND es2.user_id = u.id) as total_owed,
-            (SELECT COALESCE(SUM(amount),0) FROM settlements s WHERE s.group_id = gm.group_id AND s.to_user_id = u.id) as settlements_received,
-            (SELECT COALESCE(SUM(amount),0) FROM settlements s WHERE s.group_id = gm.group_id AND s.from_user_id = u.id) as settlements_paid
-          FROM users u
-          INNER JOIN group_members gm ON u.id = gm.user_id
-          WHERE gm.group_id = ?
-          GROUP BY u.id, u.name, u.email, u.profile_picture, gm.group_id
-        ");
-    $stmt->execute([$groupId]);
-    $balances = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $result = array_map(function ($b) {
-      $totalPaid = floatval($b['total_paid']);
-      $totalOwed = floatval($b['total_owed']);
-      $settlementsReceived = floatval($b['settlements_received']);
-      $settlementsPaid = floatval($b['settlements_paid']);
-
-      return [
-        'user_id' => (int) $b['id'],
-        'name' => $b['name'],
-        'email' => $b['email'],
-        'profile_picture' => $b['profile_picture'],
-        'total_paid' => $totalPaid,
-        'total_owed' => $totalOwed,
-        'balance' => $totalPaid - $totalOwed - $settlementsReceived + $settlementsPaid
-      ];
-    }, $balances);
-
-    Response::success($result);
-  } catch (Exception $e) {
-    Response::error('Failed to fetch group balances: ' . $e->getMessage(), 500);
-  }
-}
-
-function getSettlementSuggestions($groupId, $userId)
-{
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member
-    $stmt = $db->prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    if (!$stmt->fetch()) {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    // Get all members' balances (including settlements)
-    $stmt = $db->prepare("
-      SELECT 
-        u.id,
-        u.name,
-        (COALESCE(SUM(CASE WHEN e.paid_by = u.id THEN e.amount ELSE 0 END), 0) -
-         COALESCE(SUM(CASE WHEN es.user_id = u.id THEN es.amount ELSE 0 END), 0) -
-         COALESCE(SUM(CASE WHEN s_received.to_user_id = u.id THEN s_received.amount ELSE 0 END), 0) +
-         COALESCE(SUM(CASE WHEN s_paid.from_user_id = u.id THEN s_paid.amount ELSE 0 END), 0)) as balance
-      FROM users u
-      INNER JOIN group_members gm ON u.id = gm.user_id
-      LEFT JOIN expenses e ON e.group_id = gm.group_id
-      LEFT JOIN expense_splits es ON es.expense_id = e.id AND es.user_id = u.id
-      LEFT JOIN settlements s_received ON s_received.group_id = gm.group_id AND s_received.to_user_id = u.id
-      LEFT JOIN settlements s_paid ON s_paid.group_id = gm.group_id AND s_paid.from_user_id = u.id
-      WHERE gm.group_id = ?
-      GROUP BY u.id, u.name
-      HAVING balance != 0
-    ");
-    $stmt->execute([$groupId]);
-    $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Separate debtors and creditors
-    $debtors = [];
-    $creditors = [];
-
-    foreach ($members as $member) {
-      $balance = floatval($member['balance']);
-      if ($balance < 0) {
-        $debtors[] = ['id' => (int) $member['id'], 'name' => $member['name'], 'amount' => abs($balance)];
-      } elseif ($balance > 0) {
-        $creditors[] = ['id' => (int) $member['id'], 'name' => $member['name'], 'amount' => $balance];
+  $overview = buildOverview($userId);
+  $result = [];
+  $ledgers = loadLedgers(array_map(function ($g) { return $g['id']; }, $overview['groups']));
+  foreach ($overview['groups'] as $g) {
+    $paid = 0;
+    $owed = 0;
+    foreach ($ledgers[$g['id']]['expenses'] as $e) {
+      if ($e['paid_by'] === $userId) {
+        $paid += $e['amount'];
       }
+      $owed += $e['splits'][$userId] ?? 0;
     }
-
-    // Calculate settlement suggestions
-    $suggestions = [];
-    $i = 0;
-    $j = 0;
-
-    while ($i < count($debtors) && $j < count($creditors)) {
-      $debt = $debtors[$i]['amount'];
-      $credit = $creditors[$j]['amount'];
-      $amount = min($debt, $credit);
-
-      if ($amount > 0.01) {
-        $suggestions[] = [
-          'from_user_id' => $debtors[$i]['id'],
-          'from_user_name' => $debtors[$i]['name'],
-          'to_user_id' => $creditors[$j]['id'],
-          'to_user_name' => $creditors[$j]['name'],
-          'amount' => round($amount, 2)
-        ];
-      }
-
-      $debtors[$i]['amount'] -= $amount;
-      $creditors[$j]['amount'] -= $amount;
-
-      if ($debtors[$i]['amount'] < 0.01)
-        $i++;
-      if ($creditors[$j]['amount'] < 0.01)
-        $j++;
-    }
-
-    Response::success($suggestions);
-  } catch (Exception $e) {
-    Response::error('Failed to fetch settlement suggestions: ' . $e->getMessage(), 500);
+    $result[] = [
+      'group_id' => $g['id'],
+      'group_name' => $g['name'],
+      'category' => $g['category'],
+      'image' => $g['image'],
+      'member_count' => $g['member_count'],
+      'balance' => $g['my_net'],
+      'total_paid' => fromPaise($paid),
+      'total_owed' => fromPaise($owed),
+    ];
   }
+  Response::success($result);
 }
 
-function getSettlementHistory($groupId, $userId)
+/** v1 group balances: every member's paid / owed / net. */
+function getGroupBalances(int $groupId, int $userId)
 {
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
+  requireActiveMember($groupId, $userId);
+  $ledger = loadLedgers([$groupId])[$groupId];
+  $members = loadGroupMembers([$groupId])[$groupId] ?? [];
+  $nets = ledgerNets($ledger);
+  $result = [];
+  foreach ($members as $uid => $m) {
+    $paid = 0;
+    $owed = 0;
+    foreach ($ledger['expenses'] as $e) {
+      if ($e['paid_by'] === $uid) {
+        $paid += $e['amount'];
+      }
+      $owed += $e['splits'][$uid] ?? 0;
     }
+    $result[] = [
+      'user_id' => $uid,
+      'name' => $m['name'],
+      'email' => $m['email'],
+      'profile_picture' => $m['profile_picture'],
+      'total_paid' => fromPaise($paid),
+      'total_owed' => fromPaise($owed),
+      'balance' => fromPaise($nets[$uid] ?? 0),
+    ];
+  }
+  Response::success($result);
+}
 
-    // Get settlement history
-    $stmt = $db->prepare("
-      SELECT 
-        s.*,
-        u1.name as from_user_name,
-        u2.name as to_user_name
-      FROM settlements s
-      INNER JOIN users u1 ON s.from_user_id = u1.id
-      INNER JOIN users u2 ON s.to_user_id = u2.id
+/** Who should pay whom. Respects the group's simplify setting (v1 always showed simplified). */
+function getSettlementSuggestions(int $groupId, int $userId)
+{
+  requireActiveMember($groupId, $userId);
+  $debts = buildGroupDebts($groupId)['debts'];
+  Response::success(array_map(function ($d) {
+    return [
+      'from_user_id' => $d['from_user_id'],
+      'from_user_name' => $d['from_user_name'],
+      'to_user_id' => $d['to_user_id'],
+      'to_user_name' => $d['to_user_name'],
+      'amount' => $d['amount'],
+    ];
+  }, $debts));
+}
+
+function getSettlementHistory(int $groupId, int $userId)
+{
+  requireActiveMember($groupId, $userId);
+  $rows = getDB()->fetchAll(
+    'SELECT s.*, u1.name AS from_user_name, u1.profile_picture AS from_user_picture,
+            u2.name AS to_user_name, u2.profile_picture AS to_user_picture
+       FROM settlements s
+       INNER JOIN users u1 ON s.from_user_id = u1.id
+       INNER JOIN users u2 ON s.to_user_id = u2.id
       WHERE s.group_id = ?
-      ORDER BY s.date DESC, s.created_at DESC
-    ");
-    $stmt->execute([$groupId]);
-    $settlements = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $result = array_map(function ($s) {
-      return [
-        'id' => (int) $s['id'],
-        'from_user_id' => (int) $s['from_user_id'],
-        'from_user_name' => $s['from_user_name'],
-        'to_user_id' => (int) $s['to_user_id'],
-        'to_user_name' => $s['to_user_name'],
-        'amount' => floatval($s['amount']),
-        'date' => $s['date'],
-        'notes' => $s['notes'],
-        'created_at' => $s['created_at']
-      ];
-    }, $settlements);
-
-    Response::success($result);
-  } catch (Exception $e) {
-    Response::error('Failed to fetch settlement history: ' . $e->getMessage(), 500);
-  }
+      ORDER BY s.date DESC, s.created_at DESC',
+    [$groupId]
+  );
+  Response::success(array_map('settlementRow', $rows));
 }
 
-function recordSettlement($groupId, $userId)
+function settlementRow(array $s): array
+{
+  return [
+    'id' => (int) $s['id'],
+    'group_id' => (int) $s['group_id'],
+    'from_user_id' => (int) $s['from_user_id'],
+    'from_user_name' => $s['from_user_name'],
+    'from_user_picture' => $s['from_user_picture'] ?? null,
+    'to_user_id' => (int) $s['to_user_id'],
+    'to_user_name' => $s['to_user_name'],
+    'to_user_picture' => $s['to_user_picture'] ?? null,
+    'created_by' => isset($s['created_by']) && $s['created_by'] !== null ? (int) $s['created_by'] : null,
+    'amount' => (float) $s['amount'],
+    'date' => $s['date'],
+    'notes' => $s['notes'],
+    'created_at' => $s['created_at'],
+  ];
+}
+
+/**
+ * Inserts one payment, logs it and pushes to the other party. Shared with POST /friends/{id}/settle.
+ * @return int settlement id
+ */
+function insertSettlement(int $groupId, int $actorId, int $fromId, int $toId, int $amountPaise, string $date, ?string $notes, bool $notify = true): int
+{
+  $db = getDB();
+  $id = (int) $db->insert(
+    'INSERT INTO settlements (group_id, from_user_id, to_user_id, created_by, amount, date, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [$groupId, $fromId, $toId, $actorId, fromPaise($amountPaise), $date, $notes]
+  );
+  $fromName = userName($fromId);
+  $toName = userName($toId);
+  logActivity($groupId, $actorId, 'record_settlement', 'settlement', $id, "$fromName paid $toName " . formatInr($amountPaise), [
+    'amount' => $amountPaise,
+    'from' => $fromId,
+    'to' => $toId,
+    'nets' => [$fromId => $amountPaise, $toId => -$amountPaise],
+  ]);
+  $db->execute('UPDATE expense_groups SET updated_at = NOW() WHERE id = ?', [$groupId]);
+
+  if ($notify) {
+    foreach ([$fromId, $toId] as $uid) {
+      if ($uid === $actorId) {
+        continue;
+      }
+      $title = $uid === $toId
+        ? firstName($fromName) . ' paid you ' . formatInr($amountPaise)
+        : firstName(userName($actorId)) . " recorded that you paid " . firstName($toName) . ' ' . formatInr($amountPaise);
+      Push::toUser($uid, [
+        'type' => 'payment_recorded',
+        'group_id' => $groupId,
+        'settlement_id' => $id,
+        'actor_id' => $actorId,
+        'friend_id' => $uid === $toId ? $fromId : $toId,
+        'title' => $title,
+        'body' => groupDisplayNameFor($groupId, $uid),
+      ]);
+    }
+  }
+  return $id;
+}
+
+/** Group name, or for a hidden 1:1 group "Non-group" (pushes need something readable). */
+function groupDisplayNameFor(int $groupId, int $viewerId): string
+{
+  $g = getDB()->fetchOne('SELECT name, is_direct FROM expense_groups WHERE id = ?', [$groupId]);
+  if (!$g) {
+    return '';
+  }
+  return $g['is_direct'] ? 'Non-group payment' : $g['name'];
+}
+
+/**
+ * POST /balances/{groupId}/settlements
+ * {toUserId, amount, date, notes?, fromUserId?} — fromUserId defaults to the caller, so v1 keeps
+ * recording "I paid X"; the native app can also record "X paid me" or a payment between two others.
+ */
+function recordSettlement(int $groupId, int $userId)
 {
   $input = getJsonInput();
-
-  $toUserId = $input['toUserId'] ?? null;
-  $amount = $input['amount'] ?? null;
+  $fromId = (int) ($input['fromUserId'] ?? ($input['from_user_id'] ?? $userId));
+  $toId = (int) ($input['toUserId'] ?? ($input['to_user_id'] ?? 0));
+  $amountPaise = toPaise($input['amount'] ?? 0);
   $date = $input['date'] ?? null;
-  $notes = $input['notes'] ?? null;
+  $notes = isset($input['notes']) && $input['notes'] !== '' ? $input['notes'] : null;
 
-  if (!$toUserId || !$amount || !$date) {
+  if (!$toId || $amountPaise <= 0 || !$date) {
     Response::error('To user, amount, and date are required', 400);
   }
-
-  if ($amount <= 0) {
-    Response::error('Amount must be greater than 0', 400);
+  if ($fromId === $toId) {
+    Response::error('Choose two different people', 400);
   }
-
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
+  requireActiveMember($groupId, $userId);
+  foreach ([$fromId, $toId] as $uid) {
+    $m = memberRow($groupId, $uid);
+    if (!$m) {
+      Response::error('Both people must be members of this group', 400);
     }
-
-    // Record settlement
-    $stmt = $db->prepare('
-      INSERT INTO settlements (group_id, from_user_id, to_user_id, amount, date, notes)
-      VALUES (?, ?, ?, ?, ?, ?)
-    ');
-    $stmt->execute([$groupId, $userId, $toUserId, $amount, $date, $notes]);
-    $settlementId = $db->lastInsertId();
-
-    // Log activity
-    $stmt = $db->prepare('
-      INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description)
-      VALUES (?, ?, ?, ?, ?, ?)
-    ');
-    $stmt->execute([
-      $groupId,
-      $userId,
-      'record_settlement',
-      'settlement',
-      $settlementId,
-      "Recorded settlement of ₹$amount"
-    ]);
-
-    Response::success([
-      'id' => (int) $settlementId,
-      'message' => 'Settlement recorded successfully'
-    ], 'Settlement recorded successfully', 201);
-
-  } catch (Exception $e) {
-    Response::error('Failed to record settlement: ' . $e->getMessage(), 500);
   }
+
+  $id = insertSettlement($groupId, $userId, $fromId, $toId, $amountPaise, $date, $notes);
+  Response::success(['id' => $id, 'message' => 'Settlement recorded successfully'], 'Settlement recorded successfully', 201);
 }
 
-function deleteSettlement($groupId, $userId, $settlementId)
+/** Either side of the payment, whoever recorded it, or a group admin may delete it. */
+function deleteSettlement(int $groupId, int $userId, int $settlementId)
 {
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    // Get settlement details before deleting
-    $stmt = $db->prepare('SELECT * FROM settlements WHERE id = ? AND group_id = ?');
-    $stmt->execute([$settlementId, $groupId]);
-    $settlement = $stmt->fetch();
-
-    if (!$settlement) {
-      Response::error('Settlement not found', 404);
-    }
-
-    // Only the person who recorded the settlement can delete it
-    if ((int) $settlement['from_user_id'] !== (int) $userId) {
-      Response::error('You can only delete settlements you recorded', 403);
-    }
-
-    // Delete the settlement
-    $stmt = $db->prepare('DELETE FROM settlements WHERE id = ? AND group_id = ?');
-    $stmt->execute([$settlementId, $groupId]);
-
-    // Log activity
-    $stmt = $db->prepare('
-      INSERT INTO activities (group_id, user_id, action, entity_type, entity_id, description)
-      VALUES (?, ?, ?, ?, ?, ?)
-    ');
-    $stmt->execute([
-      $groupId,
-      $userId,
-      'delete_settlement',
-      'settlement',
-      $settlementId,
-      "Deleted settlement of ₹" . $settlement['amount']
-    ]);
-
-    Response::success([
-      'message' => 'Settlement deleted successfully'
-    ], 'Settlement deleted successfully');
-
-  } catch (Exception $e) {
-    Response::error('Failed to delete settlement: ' . $e->getMessage(), 500);
+  $member = requireActiveMember($groupId, $userId);
+  $db = getDB();
+  $s = $db->fetchOne('SELECT * FROM settlements WHERE id = ? AND group_id = ?', [$settlementId, $groupId]);
+  if (!$s) {
+    Response::error('Settlement not found', 404);
   }
+  $allowed = in_array($userId, [(int) $s['from_user_id'], (int) $s['to_user_id'], (int) ($s['created_by'] ?? 0)], true) || $member['role'] === 'admin';
+  if (!$allowed) {
+    Response::error('Only the two people involved or a group admin can delete this payment', 403);
+  }
+  $db->execute('DELETE FROM settlements WHERE id = ? AND group_id = ?', [$settlementId, $groupId]);
+  $amountPaise = toPaise($s['amount']);
+  logActivity($groupId, $userId, 'delete_settlement', 'settlement', $settlementId, 'Deleted a payment of ' . formatInr($amountPaise), [
+    'amount' => $amountPaise,
+    'from' => (int) $s['from_user_id'],
+    'to' => (int) $s['to_user_id'],
+    // The payment as it was (like delete_expense's meta): the feed shows "Removed: you paid ₹X"
+    'nets' => [(int) $s['from_user_id'] => $amountPaise, (int) $s['to_user_id'] => -$amountPaise],
+  ]);
+  Response::success(['message' => 'Settlement deleted successfully'], 'Settlement deleted successfully');
 }
 
-function getGroupActivity($groupId, $userId)
+/** v1 per-group activity list. */
+function getGroupActivity(int $groupId, int $userId)
 {
-  try {
-    $db = getDB()->getConnection();
-
-    // Check if user is member (and active)
-    $stmt = $db->prepare('SELECT id, status FROM group_members WHERE group_id = ? AND user_id = ?');
-    $stmt->execute([$groupId, $userId]);
-    $member = $stmt->fetch();
-    if (!$member || $member['status'] === 'left') {
-      Response::error('You are not a member of this group', 403);
-    }
-
-    $limit = isset($_GET['limit']) ? intval($_GET['limit']) : 50;
-
-    // Get activity
-    $stmt = $db->prepare("
-      SELECT 
-        a.*,
-        u.name as user_name,
-        u.profile_picture
-      FROM activities a
-      INNER JOIN users u ON a.user_id = u.id
-      WHERE a.group_id = ?
-      ORDER BY a.created_at DESC
-      LIMIT ?
-    ");
-    $stmt->execute([$groupId, $limit]);
-    $activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $result = array_map(function ($a) {
-      return [
-        'id' => (int) $a['id'],
-        'user_id' => (int) $a['user_id'],
-        'user_name' => $a['user_name'],
-        'profile_picture' => $a['profile_picture'],
-        'action' => $a['action'],
-        'entity_type' => $a['entity_type'],
-        'entity_id' => $a['entity_id'] ? (int) $a['entity_id'] : null,
-        'description' => $a['description'],
-        'created_at' => $a['created_at']
-      ];
-    }, $activities);
-
-    Response::success($result);
-  } catch (Exception $e) {
-    Response::error('Failed to fetch activity: ' . $e->getMessage(), 500);
-  }
+  requireActiveMember($groupId, $userId);
+  $limit = isset($_GET['limit']) ? max(1, min(200, (int) $_GET['limit'])) : 50;
+  $rows = getDB()->fetchAll(
+    'SELECT a.*, u.name AS user_name, u.profile_picture FROM activities a INNER JOIN users u ON a.user_id = u.id
+      WHERE a.group_id = ? ORDER BY a.id DESC LIMIT ' . $limit,
+    [$groupId]
+  );
+  Response::success(array_map(function ($a) {
+    return [
+      'id' => (int) $a['id'],
+      'user_id' => (int) $a['user_id'],
+      'user_name' => $a['user_name'],
+      'profile_picture' => $a['profile_picture'],
+      'action' => $a['action'],
+      'entity_type' => $a['entity_type'],
+      'entity_id' => $a['entity_id'] ? (int) $a['entity_id'] : null,
+      'description' => $a['description'],
+      'created_at' => $a['created_at'],
+    ];
+  }, $rows));
 }

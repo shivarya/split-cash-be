@@ -1,25 +1,35 @@
 <?php
-// Enable error reporting for debugging - SHOW ALL ERRORS
-error_reporting(E_ALL);
-ini_set('display_errors', 1); // Display errors in output
-ini_set('log_errors', 1); // Log errors
+// Load configuration first: APP_ENV decides how much error detail responses may carry
+require_once __DIR__ . '/config/config.php';
 
-// Custom error handler to return JSON
+error_reporting(E_ALL);
+ini_set('display_errors', APP_ENV === 'local' ? '1' : '0');
+ini_set('log_errors', '1');
+
+// Warnings and notices become exceptions (→ JSON 500). Deprecations are only logged:
+// a library deprecation on a newer PHP must not take the API down.
 set_error_handler(function ($severity, $message, $file, $line) {
+  if (!(error_reporting() & $severity)) {
+    return false;
+  }
+  if ($severity === E_DEPRECATED || $severity === E_USER_DEPRECATED) {
+    error_log("Deprecated: $message in $file:$line");
+    return true;
+  }
   throw new ErrorException($message, 0, $severity, $file, $line);
 });
 
-// Custom exception handler
 set_exception_handler(function ($e) {
+  error_log('Uncaught ' . get_class($e) . ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
   http_response_code(500);
   header('Content-Type: application/json');
-  echo json_encode([
-    'success' => false,
-    'error' => $e->getMessage(),
-    'file' => $e->getFile(),
-    'line' => $e->getLine(),
-    'trace' => $e->getTraceAsString()
-  ]);
+  $body = ['success' => false, 'error' => APP_ENV === 'local' ? $e->getMessage() : 'Something went wrong on our side'];
+  if (APP_ENV === 'local') {
+    $body['file'] = $e->getFile();
+    $body['line'] = $e->getLine();
+    $body['trace'] = $e->getTraceAsString();
+  }
+  echo json_encode($body);
   exit;
 });
 
@@ -34,8 +44,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
   exit();
 }
 
-// Load configuration
-require_once __DIR__ . '/config/config.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/utils/jwt.php';
 require_once __DIR__ . '/utils/response.php';
@@ -59,45 +67,51 @@ if (isset($_GET['url'])) {
 }
 $uri = $uri ?: '/';
 
-// Handle invite deep link landing page to open the app (or fallback to web)
+/** "/groups" matches "/groups" and "/groups/…", but not "/groupsx". */
+function routeIs(string $uri, string $prefix): bool
+{
+  return $uri === $prefix || strpos($uri, $prefix . '/') === 0;
+}
+
+// Email-invite landing page: opens the app (or falls back to Play / the web page)
 if ($uri === '/invite') {
   $token = isset($_GET['token']) ? trim($_GET['token']) : '';
-  $deepLink = $token ? 'splitcash://invite/' . urlencode($token) : 'splitcash://';
-  $webFallback = rtrim(FRONTEND_URL, '/') . ($token ? '/invite?token=' . urlencode($token) : '/');
+  $safe = preg_match('/^[A-Za-z0-9]+$/', $token) ? $token : '';
+  $deepLink = $safe ? 'splitcash://invite/' . $safe : 'splitcash://';
+  $intent = 'intent://invite/' . $safe . '#Intent;scheme=splitcash;package=dev.shivarya.splitcash;S.browser_fallback_url=' . rawurlencode(PLAY_STORE_URL) . ';end';
+  $webFallback = rtrim(FRONTEND_URL, '/') . ($safe ? '/invite?token=' . urlencode($safe) : '/');
 
   header('Content-Type: text/html; charset=utf-8');
   header('Cache-Control: no-cache, no-store, must-revalidate');
   header('Pragma: no-cache');
   header('Expires: 0');
 
-  // Try to open the app immediately
-  header('Location: ' . $deepLink);
-
-  echo '<!DOCTYPE html><html><head><meta charset="utf-8">';
-  echo '<meta http-equiv="refresh" content="0;url=' . htmlspecialchars($deepLink, ENT_QUOTES) . '">';
+  $h = function ($s) { return htmlspecialchars($s, ENT_QUOTES); };
+  echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">';
   echo '<title>Opening Split Cash...</title>';
   echo '</head><body style="font-family: sans-serif; text-align: center; padding: 2rem;">';
-  if ($token) {
-    echo '<p>Opening Split Cash to join your invite...</p>';
-  } else {
-    echo '<p>Opening Split Cash...</p>';
-  }
-  echo '<p>If nothing happens, <a href="' . htmlspecialchars($deepLink, ENT_QUOTES) . '">tap here</a>. If the app is not installed, <a href="' . htmlspecialchars($webFallback, ENT_QUOTES) . '">open the web version</a>.</p>';
-  echo '<script>setTimeout(function(){ window.location.href = ' . json_encode($deepLink) . '; setTimeout(function(){ window.location.href = ' . json_encode($webFallback) . '; }, 1500); }, 50);</script>';
+  echo $safe ? '<p>Opening Split Cash to join your invite...</p>' : '<p>Opening Split Cash...</p>';
+  echo '<p><a href="' . $h($intent) . '">Open in Split Cash</a> · <a href="' . $h($deepLink) . '">Already installed? Tap here</a></p>';
+  echo '<p>Not installed? <a href="' . $h(PLAY_STORE_URL) . '">Get it on Google Play</a> or <a href="' . $h($webFallback) . '">open the web version</a>.</p>';
+  echo '<script>setTimeout(function(){ if (/Android/i.test(navigator.userAgent)) { window.location.href = ' . json_encode($intent) . '; } else { window.location.href = ' . json_encode($deepLink) . '; } }, 50);</script>';
   echo '</body></html>';
   exit;
 }
 
+// Account-deletion instructions (the URL in Play's Data safety form)
+if ($uri === '/delete-account') {
+  require_once __DIR__ . '/controllers/pageController.php';
+  deleteAccountPage();
+}
+
 // Route the request
 try {
-  // Health check
   if ($uri === '/' || $uri === '') {
     Response::success([
       'message' => 'Split Cash API Server',
-      'version' => '1.0.0',
+      'version' => '2.0.0',
       'status' => 'running'
     ]);
-    exit;
   }
 
   if ($uri === '/health') {
@@ -107,50 +121,41 @@ try {
   }
 
   // Debug routes (temporary)
-  if (strpos($uri, '/debug') === 0) {
+  if (routeIs($uri, '/debug')) {
     require_once __DIR__ . '/controllers/debugController.php';
     handleDebugRoutes($uri, $requestMethod);
     exit;
   }
 
   // Invitation token routes (public metadata, protected acceptance)
-  if (strpos($uri, '/invitations') === 0) {
+  if (routeIs($uri, '/invitations')) {
     require_once __DIR__ . '/controllers/groupController.php';
     handleInvitationRoutes($uri, $requestMethod);
     exit;
   }
 
-  // Auth routes
-  if (strpos($uri, '/auth') === 0) {
-    require_once __DIR__ . '/controllers/authController.php';
-    handleAuthRoutes($uri, $requestMethod);
-    exit;
+  $routes = [
+    '/auth' => ['authController.php', 'handleAuthRoutes'],
+    '/groups' => ['groupController.php', 'handleGroupRoutes'],
+    '/expenses' => ['expenseController.php', 'handleExpenseRoutes'],
+    '/balances' => ['balanceController.php', 'handleBalanceRoutes'],
+    '/friends' => ['friendController.php', 'handleFriendRoutes'],
+    '/activity' => ['activityController.php', 'handleActivityRoutes'],
+    '/devices' => ['deviceController.php', 'handleDeviceRoutes'],
+    '/comments' => ['commentController.php', 'handleCommentRoutes'],
+    '/join' => ['joinController.php', 'handleJoinRoutes'],
+  ];
+  foreach ($routes as $prefix => [$file, $handler]) {
+    if (routeIs($uri, $prefix)) {
+      require_once __DIR__ . '/controllers/' . $file;
+      $handler($uri, $requestMethod);
+      exit;
+    }
   }
 
-  // Groups routes
-  if (strpos($uri, '/groups') === 0) {
-    require_once __DIR__ . '/controllers/groupController.php';
-    handleGroupRoutes($uri, $requestMethod);
-    exit;
-  }
-
-  // Expenses routes
-  if (strpos($uri, '/expenses') === 0) {
-    require_once __DIR__ . '/controllers/expenseController.php';
-    handleExpenseRoutes($uri, $requestMethod);
-    exit;
-  }
-
-  // Balances routes
-  if (strpos($uri, '/balances') === 0) {
-    require_once __DIR__ . '/controllers/balanceController.php';
-    handleBalanceRoutes($uri, $requestMethod);
-    exit;
-  }
-
-  // 404 Not Found
   Response::error('Route not found', 404);
 
 } catch (Exception $e) {
-  Response::error($e->getMessage(), 500);
+  error_log('Request failed: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+  Response::error(APP_ENV === 'local' ? $e->getMessage() : 'Something went wrong on our side', 500);
 }

@@ -14,10 +14,17 @@ function authDebugLog($msg)
   @file_put_contents($file, '[' . date('c') . '] ' . $msg . PHP_EOL, FILE_APPEND | LOCK_EX);
 }
 
+require_once __DIR__ . '/../utils/auth.php';
+require_once __DIR__ . '/../utils/activity.php';
+
 function handleAuthRoutes($uri, $method)
 {
   if ($uri === '/auth/google' && $method === 'POST') {
     googleAuth();
+  } elseif ($uri === '/auth/dev-login' && $method === 'POST') {
+    devLogin();
+  } elseif ($uri === '/auth/account' && $method === 'DELETE') {
+    deleteAccount();
   } elseif ($uri === '/auth/profile' && $method === 'GET') {
     getProfile();
   } elseif ($uri === '/auth/profile' && $method === 'PUT') {
@@ -130,6 +137,7 @@ function googleAuth()
 
     // Auto-accept any pending invitations for this email (ensures newly invited users see the group immediately)
     try {
+      activatePendingMemberships($db, (int) $user['id']);
       acceptPendingInvitations($db, (int) $user['id'], $user['email']);
       authDebugLog('Accepted invitations for user id=' . $user['id']);
     } catch (Exception $e) {
@@ -271,4 +279,92 @@ function acceptPendingInvitations($db, $userId, $email)
     // Delete invitation after successful join
     $db->execute('DELETE FROM invitations WHERE id = ?', [$invitation['id']]);
   }
+}
+
+/**
+ * Someone added by email before they had an account sits in group_members as 'pending'.
+ * Once they sign in (their placeholder row becomes their real account), they're a full member.
+ */
+function activatePendingMemberships($db, $userId)
+{
+  $db->execute("UPDATE group_members SET status = 'active' WHERE user_id = ? AND status = 'pending'", [$userId]);
+}
+
+/**
+ * POST /auth/dev-login {email, name?} — local development only: needs DEV_LOGIN_ENABLED=1 in .env
+ * AND a request from this machine (the emulator reaches it through `adb reverse`, so it's 127.0.0.1).
+ */
+function devLogin()
+{
+  $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+  if (!DEV_LOGIN_ENABLED || !in_array($remote, ['127.0.0.1', '::1'], true)) {
+    Response::error('Route not found', 404);
+  }
+  $input = getJsonInput();
+  $email = strtolower(trim((string) ($input['email'] ?? '')));
+  if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    Response::error('email is required', 400);
+  }
+  $name = trim((string) ($input['name'] ?? '')) ?: ucfirst(strtok($email, '@'));
+  $db = getDB();
+  $user = $db->fetchOne('SELECT * FROM users WHERE email = ?', [$email]);
+  if (!$user) {
+    $id = $db->insert('INSERT INTO users (google_id, email, name) VALUES (?, ?, ?)', ['dev:' . $email, $email, $name]);
+    $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$id]);
+  } elseif ($user['google_id'] === null) {
+    // A placeholder from an invite: signing in turns it into a real account, like Google sign-in does
+    $db->execute('UPDATE users SET google_id = ?, name = ? WHERE id = ?', ['dev:' . $email, $name, $user['id']]);
+    $user = $db->fetchOne('SELECT * FROM users WHERE id = ?', [$user['id']]);
+  }
+  activatePendingMemberships($db, (int) $user['id']);
+  acceptPendingInvitations($db, (int) $user['id'], $user['email']);
+  Response::success([
+    'user' => publicUser($user),
+    'token' => JWTHandler::generate($user['id'], $user['email']),
+  ]);
+}
+
+/**
+ * DELETE /auth/account — Play's in-app account deletion. The row is anonymised, not deleted:
+ * a hard delete would cascade through expenses and splits and rewrite other members' balances.
+ * Expenses keep showing "Deleted user"; the person leaves every group and can't sign in as before.
+ */
+function deleteAccount()
+{
+  $userId = requireUserId();
+  $db = getDB();
+  $groups = $db->fetchAll("SELECT group_id, role FROM group_members WHERE user_id = ? AND status IN ('active', 'pending')", [$userId]);
+
+  $conn = $db->getConnection();
+  $conn->beginTransaction();
+  try {
+    foreach ($groups as $g) {
+      $gid = (int) $g['group_id'];
+      if ($g['role'] === 'admin') {
+        // Don't leave a group without an admin
+        $otherAdmin = $db->fetchOne("SELECT user_id FROM group_members WHERE group_id = ? AND role = 'admin' AND status = 'active' AND user_id != ?", [$gid, $userId]);
+        if (!$otherAdmin) {
+          $next = $db->fetchOne("SELECT user_id FROM group_members WHERE group_id = ? AND status = 'active' AND user_id != ? ORDER BY joined_at ASC LIMIT 1", [$gid, $userId]);
+          if ($next) {
+            $db->execute("UPDATE group_members SET role = 'admin' WHERE group_id = ? AND user_id = ?", [$gid, $next['user_id']]);
+          }
+        }
+      }
+      logActivity($gid, $userId, 'delete_account', 'user', $userId, 'Deleted their Split Cash account');
+    }
+    $db->execute("UPDATE group_members SET status = 'left', left_at = NOW() WHERE user_id = ? AND status IN ('active', 'pending')", [$userId]);
+    $db->execute(
+      "UPDATE users SET name = 'Deleted user', email = CONCAT('deleted-', id, '@deleted.invalid'), google_id = NULL,
+              profile_picture = NULL, phone = NULL, deleted_at = NOW() WHERE id = ?",
+      [$userId]
+    );
+    $db->execute('DELETE FROM devices WHERE user_id = ?', [$userId]);
+    $db->execute('DELETE FROM friend_reminders WHERE from_user_id = ? OR to_user_id = ?', [$userId, $userId]);
+    $db->execute('DELETE FROM invitations WHERE invited_by = ? OR user_id = ?', [$userId, $userId]);
+    $conn->commit();
+  } catch (Exception $e) {
+    $conn->rollBack();
+    Response::error('Failed to delete account: ' . $e->getMessage(), 500);
+  }
+  Response::success(null, 'Your account has been deleted');
 }

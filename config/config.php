@@ -46,6 +46,22 @@ define('WEBSITE_URL', getenv('WEBSITE_URL') ?: 'https://shivarya.github.io/split
 define('PRIVACY_POLICY_URL', getenv('PRIVACY_POLICY_URL') ?: 'https://shivarya.github.io/split-cash/privacy');
 define('TERMS_URL', getenv('TERMS_URL') ?: 'https://shivarya.github.io/split-cash/terms');
 
+// Environment: 'local' turns on error details in JSON responses. Anything else is treated as production.
+define('APP_ENV', getenv('APP_ENV') ?: 'production');
+// Dev login (POST /auth/dev-login) — only honoured when this is '1' AND the request comes from localhost. Never set on prod.
+define('DEV_LOGIN_ENABLED', getenv('DEV_LOGIN_ENABLED') === '1');
+
+// Public base URL of this API, used to build share links (invite-via-link landing pages)
+define('PUBLIC_BASE_URL', rtrim(getenv('PUBLIC_BASE_URL') ?: 'https://shivarya.dev/split_cash', '/'));
+define('PLAY_STORE_URL', 'https://play.google.com/store/apps/details?id=dev.shivarya.splitcash');
+
+// Receipt photos live outside the web root on prod (set UPLOADS_DIR there); locally they default to server/uploads (gitignored)
+define('UPLOADS_DIR', rtrim(getenv('UPLOADS_DIR') ?: (__DIR__ . '/../uploads'), '/\\'));
+
+// Firebase Cloud Messaging (HTTP v1). Without these, pushes are skipped and logged.
+define('FCM_PROJECT_ID', getenv('FCM_PROJECT_ID') ?: '');
+define('FCM_SERVICE_ACCOUNT_PATH', getenv('FCM_SERVICE_ACCOUNT_PATH') ?: '');
+
 // Timezone
 date_default_timezone_set('Asia/Kolkata');
 
